@@ -1,1 +1,2782 @@
+-- BLUE FARM ALL-IN-ONE | by.Xepz
+-- BLUE LOCK FARM | by.Fyrelith
+-- discord.gg/kgbFFGWHwr
+-- BLUE FARM startup status: remains visible if initialization fails.
+local bootPlayer=game:GetService("Players").LocalPlayer
+while not bootPlayer do task.wait() bootPlayer=game:GetService("Players").LocalPlayer end
+local bootParent=bootPlayer:WaitForChild("PlayerGui",30)
+if not bootParent then warn("BlueFarm: PlayerGui did not load; run again after joining") return end
+local staleBoot=bootParent:FindFirstChild("BlueFarmStartup") if staleBoot then staleBoot:Destroy() end
+local bootGui=Instance.new("ScreenGui") bootGui.Name="BlueFarmStartup" bootGui.ResetOnSpawn=false bootGui.DisplayOrder=999 bootGui.Parent=bootParent
+local bootText=Instance.new("TextLabel") bootText.Size=UDim2.fromOffset(490,100) bootText.Position=UDim2.new(0.5,-245,0,35) bootText.BackgroundColor3=Color3.fromRGB(25,27,33) bootText.TextColor3=Color3.fromRGB(0,207,224) bootText.Font=Enum.Font.Gotham bootText.TextSize=15 bootText.TextWrapped=true bootText.Text="BLUE FARM • Loading game…" bootText.Parent=bootGui
+Instance.new("UICorner",bootText).CornerRadius=UDim.new(0,8)
+local bootOK,bootError=xpcall(function()
+if not game:IsLoaded() then game.Loaded:Wait() end
+local bootRS=game:GetService("ReplicatedStorage")
+assert(bootRS:WaitForChild("Remotes",30),"Game remotes did not load")
+assert(bootRS:WaitForChild("Client",30),"Game client modules did not load")
+bootText.Text="BLUE FARM • Building dashboard…"
+local G=getgenv()
+if G.AutoBuyConveyor then G.AutoBuyConveyor.running=false end
+local previousFarm=G.BlueFarm
+if previousFarm and type(previousFarm.saveConfig)=="function" then pcall(previousFarm.saveConfig) end
+if G.BlueFarm then G.BlueFarm.running=false end
+local S={version="dashboard-31-training-return",running=true,enabled=true,cycles=0,opened=0,bought=0,sold=0,errors=0,lastError="",strikerUpgrades=0,luckUpgrades=0,placed=0,waitingBoxes=0,baseSwaps=0,gameUpgrades=0}
+local S={version="dashboard-64-training-tp",running=true,enabled=true,cycles=0,opened=0,bought=0,sold=0,errors=0,lastError="",strikerUpgrades=0,luckUpgrades=0,placed=0,waitingBoxes=0,baseSwaps=0,gameUpgrades=0}
+G.BlueFarm=S
+G.BlueFarmSellOnce=G.BlueFarmSellOnce or {sent=false,done=false,status="Waiting for a spare striker"}
+S.sellOnce=G.BlueFarmSellOnce
+G.BlueFarmSpareSale=G.BlueFarmSpareSale or {sent={},sold=0,status="Checking spare strikers"}
+G.BlueFarmConveyor=G.BlueFarmConveyor or {autoBuy=true,spawnBestLocker=true,warnings=true,variantFilter=false,variants={},boxes={}}
+local config=G.BlueFarmConveyor
+if config.autoBuy==nil then config.autoBuy=true end
+if config.spawnBestLocker==nil then config.spawnBestLocker=config.autoSpawn~=false end
+S.conveyor=config
+config.keepLockers=10
+config.openLockers=5
+if config.autoSellLockers==nil then config.autoSellLockers=true end
+G.BlueFarmLockerSale=G.BlueFarmLockerSale or {sold=0}
+S.lockerSale=G.BlueFarmLockerSale
+local RS=game:GetService("ReplicatedStorage")
+local P=game.Players.LocalPlayer
+local R=RS.Remotes
+local D=require(RS.Client.Data.ClientDataManager)
+do
+ local deadline=os.clock()+30
+ local available=false
+ repeat
+ local ok,data=pcall(D.GetData)
+ available=ok and type(data)=="table" and type(data.Inventory)=="table" and type(data.PlayerUnits)=="table" and type(data.Currency)=="table"
+ if not available then task.wait(0.1) end
+ until available or os.clock()>=deadline
+ assert(available,"Player data did not load; join the game fully and run again")
+end
+local B=require(RS.Shared.Services.BoxService)
+local U=require(RS.Shared.Services.PlayerUnitService)
+local UL=require(RS.Shared.Core.Storage.Game.UpgradesLibrary)
+local BL=require(RS.Shared.Core.Storage.Game.BoxesLibrary)
+local US=require(RS.Shared.Services.UpgradesService)
+local C=require(RS.Client.Core.ConveyorRollClient)
+local X={sellSpareStrikers=true,polisher=false,luckPotion=false,cashPotion=false,speedPotion=false,bluetooth=false,market=false,skinBuy=true,skinEquip=false,grade=false,trait=false,tower=false,events=false,obby=false,esp=false,upgrades=true,rewards=true,fastOpen=true,rollLimit=20,gradeTarget=3,traitTarget=1.5,spendPercent=10,reserveCash=0,towerName="Entrance"}
+S.options=X
+X.noRollLimit=false
+X.antiAFK=true
+X.autoObby=true
+X.strikerUpgrade=true
+X.uiKey="RightShift"
+X.themeR=0 X.themeG=207 X.themeB=224
+X.showIcon=true
+X.trainingTP=true
+X.gradeCash=false
+X.mapCollect=true
+X.events=true
+X.collectWalk=true
+X.collectMode="Tween"
+X.collectTweenSpeed=60
+X.collectTweenSpeed=600
+X.fastTweenConfigured=false
+X.collectTPDelay=0.5
+X.autoEquip=true
+X.fullMarketBalance=true
+X.towerBest=true
+X.towerLatest=true
+X.towerTeam={}
+X.gradeTargets={S=true,SS=true,X=true,EX=true,UR=true}
+X.traitTargets={FortuneIII=true}
+X.bluetooth=true
+X.speedPotion=true
+if previousFarm and previousFarm.options then
+ for key,value in previousFarm.options do X[key]=type(value)=="table" and table.clone(value) or value end
+ S.enabled=previousFarm.enabled~=false
+end
+X.tpRoll=nil
+X.bluetooth=false
+X.speedPotion=false
+-- Persist only settings; never load executable code or runtime sale/collection state.
+local http=game:GetService("HttpService")
+local configPath="BlueFarm_Config_"..tostring(game.PlaceId).."_"..tostring(P.UserId)..".json"
+local configState={file=configPath,loaded=false,saves=0,status="Config: starting",lastError=""}
+S.config=configState
+local configBounds={rollLimit={1,500},spendPercent={1,100},reserveCash={0,1e18},collectTweenSpeed={5,500},collectTPDelay={0.2,10},gradeTarget={1,14},traitTarget={1,3}}
+local configBounds={rollLimit={1,500},spendPercent={1,100},reserveCash={0,1e18},collectTweenSpeed={5,2000},collectTPDelay={0.2,10},gradeTarget={1,14},traitTarget={1,3}}
+local optionKinds={}
+for key,value in X do optionKinds[key]=type(value) end
+optionKinds.unit="string"
+local loadedUI
+local function validNumber(n) return type(n)=="number" and n==n and math.abs(n)<math.huge end
+local function validEnvelope(value)
+ return type(value)=="table" and value.schema==1 and value.placeId==game.PlaceId and value.userId==P.UserId
+end
+local function readSettings(path)
+ if type(readfile)~="function" then return nil end
+ if type(isfile)=="function" then local ok,exists=pcall(isfile,path) if not ok or not exists then return nil end end
+ local ok,raw=pcall(readfile,path)
+ if not ok or type(raw)~="string" or #raw>250000 then return nil end
+ local decoded,value=pcall(function()return http:JSONDecode(raw)end)
+ if decoded and validEnvelope(value) then return value end
+ return nil
+end
+G.BlueFarmConfigSessions=G.BlueFarmConfigSessions or {}
+local loadedConfig=readSettings(configPath) or readSettings(configPath..".bak") or G.BlueFarmConfigSessions[configPath]
+if validEnvelope(loadedConfig) then
+ local saved=loadedConfig.options
+ if type(saved)=="table" then
+ for key,kind in optionKinds do
+ local value=saved[key]
+ if kind=="boolean" and type(value)=="boolean" then X[key]=value
+ elseif kind=="number" and validNumber(value) then
+ local bounds=configBounds[key] X[key]=bounds and math.clamp(value,bounds[1],bounds[2]) or value
+ elseif kind=="string" and type(value)=="string" and #value<200 then
+ if key~="collectMode" or value=="TP" or value=="Tween" then X[key]=value end
+ elseif kind=="table" and type(value)=="table" then
+ if key=="towerTeam" then
+ local team={} local used={}
+ for slot=1,require(RS.Shared.Constants).InfinityTowerUnitSlots do
+ local id=value[tostring(slot)] or value[slot]
+ if type(id)=="string" and D.GetData().PlayerUnits[id] and not used[id] then team[slot]=id used[id]=true end
+ end
+ X[key]=team
+ elseif key=="gradeTargets" or key=="traitTargets" then
+ local library=require(RS.Shared.Core.Storage.Game[key=="gradeTargets" and "GradesLibrary" or "TraitsLibrary"])
+ local selected={} for name,enabled in value do if type(name)=="string" and library[name] and enabled==true then selected[name]=true end end
+ X[key]=selected
+ end
+ end
+ end
+ end
+ local conveyor=loadedConfig.conveyor
+ if type(conveyor)=="table" then
+ for _,key in {"autoBuy","spawnBestLocker","warnings","variantFilter","autoSellLockers"} do if type(conveyor[key])=="boolean" then config[key]=conveyor[key] end end
+ if conveyor.spawnBestLocker==nil and type(conveyor.autoSpawn)=="boolean" then config.spawnBestLocker=conveyor.autoSpawn end
+ for _,key in {"variants","boxes"} do
+ if type(conveyor[key])=="table" then
+ local library=key=="boxes" and BL or require(RS.Shared.Core.Storage.Game.VariantsLibrary)
+ local selected={} for name,enabled in conveyor[key] do if type(name)=="string" and library[name] and type(enabled)=="boolean" then selected[name]=enabled end end
+ config[key]=selected
+ end
+ end
+ end
+ if loadedConfig.language=="th" or loadedConfig.language=="en" then G.BlueFarmLanguage=loadedConfig.language end
+ if type(loadedConfig.enabled)=="boolean" then S.enabled=loadedConfig.enabled end
+ if type(loadedConfig.ui)=="table" then loadedUI=loadedConfig.ui end
+ configState.loaded=true
+end
+configState.status=configState.loaded and "Config: loaded" or "Config: ready"
+config.autoSpawn=nil
+if not X.fastTweenConfigured then X.collectTweenSpeed=math.max(600,tonumber(X.collectTweenSpeed) or 600) X.fastTweenConfigured=true end
 
+
+S.reservedUnits={}
+S.towerProtected={}
+for _,id in X.towerTeam do S.towerProtected[id]=true end
+if X.unit and D.GetData().PlayerUnits[X.unit] then S.reservedUnits[X.unit]=true else X.unit=nil end
+S.featureStatus={}
+S.confirmed={}
+local old=P.PlayerGui:FindFirstChild("BlueFarmControls") if old then old:Destroy() end
+local gui=Instance.new("ScreenGui") gui.Name="BlueFarmControls" gui.ResetOnSpawn=false gui.DisplayOrder=80 gui.ZIndexBehavior=Enum.ZIndexBehavior.Sibling gui.Parent=P.PlayerGui
+local UIS=game:GetService("UserInputService")
+local connections={}
+local blue=Color3.fromRGB(47,170,255)
+local blue=Color3.fromRGB(0,207,224)
+-- Keep source strings separate from rendered text so live statuses can be translated.
+local language=G.BlueFarmLanguage=="en" and "en" or "th"
+local localeRows={
+ {"ไม่มี Bluetooth Potion → TP ไปสุ่มแล้วกลับ",nil,"No Bluetooth Potion → TP to roll and return"},
+ {"เปิดเมื่อไม่มีบัฟและไม่มี Bluetooth Potion • รอผลสุ่มแล้วกลับจุดเดิม",nil,"Without an active buff or Bluetooth Potion: teleport to the station, roll, then return"},
+ {"Auto Upgrade Striker • อัพเวลนักเตะ",nil,"Auto Upgrade Striker • Level up Strikers"},
+ {"อัปเกรดนักเตะใน Base ทุกตัวที่เงินพอ • แยกจาก Base / Luck",nil,"Upgrade affordable Strikers in your base; separate from Base / Luck upgrades"},
+ {"TP รับโบนัสที่พร้อม แล้วกลับบ้านอัตโนมัติ • รอคูลดาวน์",nil,"TP to ready bonuses, return home automatically, then wait for cooldown"},
+ {"Auto Obby • รับโบนัสอัตโนมัติ",nil,"Auto Obby • Collect bonuses automatically"},
+ {"TP ไปจุดโบนัสที่พร้อม • ยืนยันรับแล้วกลับจุดเดิม • รอคูลดาวน์",nil,"TP to ready bonus pads, confirm the reward, return and wait for cooldown"},
+ {"Anti AFK • ป้องกันหลุดเมื่ออยู่นิ่ง",nil,"Anti AFK • Prevent idle disconnect"},
+ {"ทำงานเมื่อเกมตรวจว่าอยู่นิ่ง • ยังทำงานขณะพักฟาร์ม",nil,"Runs on idle detection; remains active while farming is paused"},
+ {"TP ไปสุ่มแล้วกลับ เมื่ออยู่นอกระยะ",nil,"TP to roll and return when out of range"},
+ {"ไม่มีบัฟระยะไกล: TP ไปสถานีแล้วกลับ • ไม่ใช้โพชั่นในกระเป๋า",nil,"Without a remote-roll buff: teleport to the station, roll and return; no potion is consumed"},
+ {"สคริปต์หยุดอยู่ • กดปุ่มเริ่มด้านบนก่อน",nil,"Script paused; press the top Resume button first"},
+ {"ปิด Auto Buy อยู่ • คลิกปุ่มนี้เพื่อเริ่มซื้อทั้งหมด",nil,"Auto Buy is OFF; click this button to buy all skins"},
+ {"Waiting for inventory operations","รอจัดการกระเป๋า",nil},
+ {"Waiting for base operations","รอจัดการ Base",nil},
+ {"Auto Buy is OFF","ปิด Auto Buy อยู่",nil},
+ {"Waiting for your conveyor","รอสายพานของคุณ",nil},
+ {"Finish the conveyor tutorial first","ทำบทสอนสายพานให้เสร็จก่อน",nil},
+ {"Spawning conveyor locker","กำลังเรียกกล่องบนสายพาน",nil},
+ {"Purchase unconfirmed; retrying after cooldown","ยังไม่ยืนยันการซื้อ • รอลองใหม่",nil},
+ {"ซื้อ Ball Skin ทั้งหมดอัตโนมัติ",nil,"Auto Buy All Ball Skins"},
+ {"ซื้อทุกชนิดและซื้อซ้ำจนสต็อกหมด • ใช้ Cash เท่านั้น",nil,"Buy every skin type and all available copies; Cash only"},
+ {"ซื้อ Ball Skin ทุกชนิดและทุกชิ้นที่มีสต็อก\nNO STOCK = ของหมด ระบบรอร้านเติมให้อัตโนมัติ",nil,"Buys every Ball Skin type and all available copies.\nNO STOCK means sold out; waits for automatic restock."},
+ {"สินค้าหมด • รอร้านเติมอัตโนมัติ",nil,"Sold out; waiting for automatic restock"},
+ {"ทีมมีสกินดีกว่าหรือเท่ากับสินค้าที่เหลือ",nil,"Your team already has equal or better skins than the available stock"},
+ {"เงินไม่พอ หรือเกินงบที่ตั้งไว้",nil,"Not enough cash, or the item exceeds your budget"},
+ {"มีสกินรอใส่ในกระเป๋า • เปิด Auto Equip เพื่อใส่ต่อ",nil,"A skin is already in your inventory; enable Auto Equip to use it"},
+ {"กระเป๋าเต็ม • รอช่องว่างก่อนซื้อสกิน",nil,"Inventory full; waiting for space before buying skins"},
+ {"วางนักเตะลง Base ก่อนซื้อสกิน",nil,"Place Strikers in your base before buying skins"},
+ {"กำลังตรวจสต็อกสกิน",nil,"Checking Ball Skin stock"},
+ {"Spawn Best Locker","วาง Locker ที่ดีที่สุด","Spawn Best Locker"},
+ {"วางกล่องดีที่สุดจากกระเป๋าลง Base • รอเปิดพร้อมกันสูงสุด 5 กล่อง",nil,"Place the best inventory Lockers in your base; up to 5 opening at once"},
+ {"Auto Save Config","บันทึก Config อัตโนมัติ","Auto Save Config"},
+ {"Config: saved","บันทึกค่าแล้ว","Settings saved"},
+ {"Config: loaded","โหลดค่าที่บันทึกแล้ว","Saved settings loaded"},
+ {"Config: ready","พร้อมบันทึกค่า","Ready to save settings"},
+ {"Config: session only","Executor เขียนไฟล์ไม่ได้ • จำค่าเฉพาะรอบนี้","File writing unavailable; settings kept for this session only"},
+ {"Config: save failed","บันทึกไฟล์ไม่สำเร็จ","Could not save settings file"},
+ {"อยู่นอกระยะสถานีสุ่ม",nil,"Out of range of the rolling station"},
+ {"การสุ่มต้องอยู่ในระยะสถานี หรือมี Bluetooth ที่ใช้งานอยู่\nสคริปต์ไม่ย้ายตัวละครไปสุ่ม",nil,"Rolling requires station range or an active Bluetooth buff.\nThe script does not move your character to roll."},
+ {"เปิด TP ไปสุ่มแล้วกลับ เพื่อสุ่มจากนอกระยะ\nระบบรอผลสุ่มแล้วกลับจุดเดิม",nil,"Enable TP to roll and return when outside station range.\nWaits for the roll result, then returns to the starting point."},
+ {"ใส่ Best Skin ตามอันดับนักเตะ",nil,"Auto equip best skins by Striker rank"},
+ {"สกินดีที่สุดให้นักเตะ Base สูงสุดก่อน แล้วไล่ลงมา • ไม่ลดระดับสกิน",nil,"Best skins go to the highest-base Strikers first, then down the team; never downgrades"},
+ {" ให้ ",nil," on "}, {" • อันดับ ",nil," • Rank "},
+ {"เปิดหน้าหอคอยของเกม",nil,"Open the game's Tower menu"},
+ {"Auto Equip Best • ทีมหอคอย",nil,"Auto Equip Best • Tower team"},
+ {"เปิด = จัดทีมเก่งสุด • ปิด = ใช้นักเตะที่เลือกเองด้านล่าง",nil,"ON: build the best team. OFF: use your selected Strikers below."},
+ {"Auto Select Latest Stage • ด่านล่าสุด",nil,"Auto Select Latest Stage • Latest unlocked stage"},
+ {"เลือกด่านสูงสุดที่ปลดล็อกแล้ว ก่อนเริ่มรอบใหม่",nil,"Select the highest unlocked stage before each new run"},
+ {"Auto Battle • ต่อสู้อัตโนมัติ",nil,"Auto Battle • Repeat runs automatically"},
+ {"เลือกด่าน → เลือกทีม → เปิด Auto Battle\nทีมอัตโนมัติกับทีมเลือกเองใช้แยกจาก Auto Equip ใน Base",nil,"Choose stage → Choose team → Enable Auto Battle.\nTower team settings are separate from Base Auto Equip."},
+ {"เลือกนักเตะเอง: ปิด Auto Equip Best ก่อน",nil,"Manual team: turn Auto Equip Best OFF first"},
+ {"ช่องทีม ",nil,"Team slot "}, {" • เลือกนักเตะ",nil," • Select Striker"},
+ {"ยังไม่ได้เลือกทีมหอคอย",nil,"No Tower team selected"},
+ {"ล้างทีมที่เลือกเอง",nil,"Clear manual team"},
+ {"ไม่พบหน้าหอคอย: ",nil,"Tower menu unavailable: "},
+ {"เดินทางไปเก็บของอัตโนมัติ",nil,"Auto travel to collect items"},
+ {"เลือก TP หรือ Tween ด้านล่าง • กด WASD เพื่อพัก",nil,"Choose TP or Tween below; WASD pauses travel"},
+ {"วิธีเดินทางไปเก็บของ",nil,"Collection travel mode"},
+ {"ความเร็ว Tween (studs/วินาที)",nil,"Tween speed (studs/second)"},
+ {"ช่วงห่าง TP (วินาที)",nil,"TP interval (seconds)"},
+ {"TP = ย้ายทันที • ค่าน้อย = ย้ายถี่ขึ้น\nTween = เคลื่อนที่ต่อเนื่อง • ค่ามาก = เร็วขึ้น",nil,"TP: instant movement; a shorter interval means faster hops.\nTween: smooth travel; a higher speed means faster movement."},
+ {"กำลังเก็บด้วย ",nil,"Collecting with "},
+ {"ใช้เงินได้เต็มยอด",nil,"Use full cash balance"},
+ {"ไม่จำกัด % และไม่กันเงินสำรอง • ซื้อได้เมื่อเงินพอ",nil,"Ignore budget % and cash reserve; buy whenever affordable"},
+ {"Auto Equip Best • ใส่นักเตะดีที่สุด",nil,"Auto Equip Best • Equip the best Strikers"},
+ {"เติมช่องว่างและเปลี่ยนตัวที่อ่อนกว่า • เทียบ Base ก่อนเลเวล",nil,"Fill empty slots and replace weaker units; base income first, level second"},
+ {"เปิดร้าน Ball Skins",nil,"Open Ball Skins shop"},
+ {"เปิดร้านของเกมได้จากตรงนี้ ไม่ต้องเดินไปที่ร้าน",nil,"Open the game shop here from anywhere on the map"},
+ {"ซื้อได้ไม่เกินกี่ % ของเงินที่มี",nil,"Maximum purchase price (% of your cash)"},
+ {"เงินขั้นต่ำที่ต้องเหลือหลังซื้อ",nil,"Cash to keep after buying"},
+ {"ตัวอย่าง: มีเงิน 1,000 ตั้ง 10% = ซื้อได้ไม่เกิน 100 ต่อชิ้น\nเงินสำรองคือเงินที่ต้องเหลือหลังซื้อ ใช้กับระบบซื้อในหน้านี้",nil,"Example: 1,000 cash at 10% allows items costing up to 100.\nCash to keep is your balance after buying. Applies to this page's auto purchases."},
+ {"ซื้อสกินที่เพิ่มรายได้ให้นักเตะใน Base เท่านั้น\nNO STOCK = ของหมด ระบบรอร้านเติมให้อัตโนมัติ",nil,"Only buys skins that improve a Striker in your base.\nNO STOCK means sold out; auto buying waits for restock."},
+ {"ซื้อ Ball Skin อัตโนมัติ",nil,"Auto buy better Ball Skins"},
+ {"ซื้อเมื่อมีของ เงินพอ และได้สกินที่ดีกว่า • ใช้ Cash เท่านั้น",nil,"Buy when in stock, affordable, and useful; Cash only"},
+ {"ใส่ Ball Skin อัตโนมัติ",nil,"Auto equip better Ball Skins"},
+ {"เพิ่มตัวคูณเงินเท่านั้น • สกินเก่าจะถูกทำลายเมื่อเปลี่ยน",nil,"Only improves the cash multiplier; replacing destroys the old skin"},
+ {"ตลาด Locker ใช้ไม่ได้ในเซิร์ฟเวอร์นี้\nซื้อ Locker อัตโนมัติบนสายพานได้ในหน้า Farm",nil,"Locker market is unavailable on this server.\nUse conveyor Auto Buy in Farm instead."},
+ {"สต็อกร้าน Ball Skins",nil,"Ball Skins shop stock"},
+ {"มีของ ",nil,"In stock "}, {"ของหมด • รอเติม",nil,"Sold out; waiting for restock"},
+ {"สถานะซื้อ/ใส่สกิน: ",nil,"Skin buy/equip status: "},
+ {"ร้านเติมใน ",nil,"Restocks in "}, {" วินาที",nil," seconds"},
+ {"จัดนักเตะอัตโนมัติเปิดอยู่",nil,"Auto Equip Best is ON"},
+ {"จัดนักเตะอัตโนมัติปิดอยู่",nil,"Auto Equip Best is OFF"},
+ {"เปิดร้านไม่สำเร็จ: ",nil,"Could not open shop: "},
+ {"เก็บของตามแมพอัตโนมัติ",nil,"Auto collect map items"},
+ {"Grade / Trait Token และ Potion ที่เกิดตามแมพ",nil,"Grade / Trait Tokens and Potions spawned on the map"},
+ {"เก็บของ Event อัตโนมัติ",nil,"Auto collect event drops"},
+ {"Item Rain ที่ตกถึงพื้น และ Variant Token",nil,"Landed Item Rain drops and Variant Tokens"},
+ {"เดินไปเก็บของอัตโนมัติ",nil,"Walk to collect items automatically"},
+ {"หาเส้นทางไปของใกล้สุด • กด WASD เพื่อพักการเดินชั่วคราว",nil,"Routes to the nearest item; WASD temporarily pauses movement"},
+ {"ของตามแมพ ",nil,"Map items "}, {" • เก็บยืนยัน ",nil," • Confirmed "},
+ {" • ส่งคำขอ ",nil," • Requests "}, {"กำลังเดินไปเก็บ ",nil,"Walking to collect "},
+ {"ไม่พบของให้เก็บ",nil,"No collectible items available"},
+ {"พักเดิน: กำลังควบคุมตัวละคร",nil,"Walking paused: manual character control"},
+ {"หาเส้นทางไม่ได้ • ข้ามชั่วคราว",nil,"No route found; skipping temporarily"},
+ {"No Limit • ไม่จำกัดจำนวนสุ่ม",nil,"No Limit • Unlimited rolls"},
+ {"หยุดเมื่อได้เป้าหมาย หรือเงิน/Token ไม่พอ",nil,"Stops at a selected target or when cash/Tokens run out"},
+ {"ใช้ Cash สำหรับ Grade",nil,"Use Cash for Grade"},
+ {"เปิด = ใช้เงินเกม • ปิด = ใช้ Grade Token • Trait ใช้ Token",nil,"ON: game cash. OFF: Grade Tokens. Trait always uses Tokens."},
+ {"เงินไม่พอสุ่ม Grade",nil,"Not enough cash for a Grade roll"},
+ {"ค่าจำนวนครั้งด้านล่างใช้เมื่อปิด No Limit เท่านั้น",nil,"The roll limit below applies only when No Limit is OFF"},
+ {"เลือกได้หลายรายการ • กดซ้ำเพื่อยกเลิก\nหยุดเมื่อได้รายการใดรายการหนึ่งที่เลือกไว้",nil,"Select multiple targets; click again to deselect.\nStops on any selected Grade or Trait."},
+ {"เลือกรายการเป้าหมายก่อนเปิดสุ่ม",nil,"Select at least one target before rolling"},
+ {"Select • เลือก Striker จากหน้าของเกม",nil,"Select • Open the game's Striker picker"},
+ {"Grade เป้าหมาย (F–UR)",nil,"Target Grade (F–UR)"},
+ {"Trait เป้าหมาย (ชื่อจริงในเกม)",nil,"Target Trait (in-game name)"},
+ {"เลือก Grade แล้วหยุดเมื่อได้ระดับนั้นหรือสูงกว่า\nTrait จะหยุดเมื่อได้ชื่อที่เลือก",nil,"Grade stops at the selected rank or higher.\nTrait stops at the selected Trait name."},
+ {"สุ่มจากทุกที่: ใช้ Bluetooth Potion ที่มีเมื่ออยู่นอกระยะ\nโหมดเร็วส่งตามคูลดาวน์จริง ไม่รอแอนิเมชันของหน้าเกม",nil,"Roll anywhere using owned Bluetooth Potions when out of range.\nFast mode follows server cooldowns without waiting for UI animations."},
+ {"รอเลือกตัวจากหน้าของเกม",nil,"Select a unit in the game's picker"},
+ {"ตัวนี้ไม่พร้อมเลือกแล้ว • กรุณาเปิด Select ใหม่",nil,"Unit is no longer available. Reopen Select."},
+ {"ไม่มี Bluetooth Potion • ไปสถานีสุ่มก่อน",nil,"No Bluetooth Potion available; go to the rolling station"},
+ {"รอ Bluetooth Potion ทำงาน",nil,"Waiting for Bluetooth Potion activation"},
+ {"ไม่พบหน้าเลือกตัวของเกม",nil,"Game unit picker unavailable"},
+ {"หยุดเมื่อได้ Trait ที่เลือก / โทเคนหมด",nil,"Stops at the selected Trait or when Tokens run out"},
+ {"ภาพรวม / Status","ภาพรวม","Overview"}, {"ฟาร์ม / Farm","ฟาร์ม","Farm"},
+ {"บัฟ / Boosts","บัฟ","Boosts"}, {"ตลาด / Market","ตลาด","Market"},
+ {"ฝึก / Training","ฝึก","Training"}, {"ทีม / Tower","ทีม / หอคอย","Team / Tower"},
+ {"กิจกรรม / ESP","กิจกรรม / ESP","Events / ESP"},
+ {"ปุ่มด้านบนหยุด/เริ่มทุกระบบ • ลากหัวหน้าต่างเพื่อย้าย\nปุ่ม − ย่อหน้าต่าง • RightShift ซ่อน/แสดง",nil,"Top button pauses/resumes all systems. Drag the title to move.\n− minimizes the window. RightShift hides/shows it."},
+ {"Auto Team: ใช้ Base สูงสุด • เติมช่องว่าง\nอัปเกรด Striker ทุกตัวที่เงินพอ • ใช้เงินได้เต็มยอด",nil,"Auto Team: prioritize base income and fill empty slots.\nUpgrade every affordable Striker; may spend the full balance."},
+ {"ซื้อ Locker บนสายพาน",nil,"Buy conveyor Lockers"}, {"ใช้เงินเกม และตัวกรองด้านล่าง",nil,"Uses game cash and the filters below"},
+ {"เรียก Locker ใหม่",nil,"Spawn new Lockers"}, {"เรียกเมื่อเกมอนุญาต",nil,"Spawns when the game allows it"},
+ {"เก็บ Striker สำรองดีที่สุด 10 ตัว",nil,"Keep the best 10 spare Strikers"},
+ {"ไม่นับตัวใน Base • ขายส่วนเกิน • กัน Favorite/Training",nil,"Excludes base units; sells surplus; protects Favorites/Training"},
+ {"เก็บ 10 กล่องที่ดีที่สุด",nil,"Keep the best 10 Lockers"}, {"ขายส่วนเกิน • ไม่ขายรายการ Favorite",nil,"Sells surplus; keeps Favorites"},
+ {"อัปเกรด Base / Luck / ระบบเงิน",nil,"Upgrade Base / Luck / Cash systems"},
+ {"รวมอัปเกรดเครื่องขัดบอล เมื่อปลดล็อก",nil,"Includes Polisher upgrades once unlocked"},
+ {"เปิดกล่องที่พร้อม + ตัดแอนิเมชัน",nil,"Open ready Lockers / Skip animations"},
+ {"ยังรอเวลาจริงของเซิร์ฟเวอร์",nil,"Still respects the server's unlock timer"},
+ {"รับรางวัลอัตโนมัติ",nil,"Auto claim rewards"}, {"Index • Playtime • Daily • Offline เมื่อมีสิทธิ์",nil,"Index / Playtime / Daily / Offline, when eligible"},
+ {"กรอง Variant",nil,"Filter Variants"}, {"OFF = รับทุก Variant",nil,"OFF = allow all Variants"},
+ {"VARIANTS","รูปแบบ Variant","VARIANTS"}, {"LOCKERS","กล่อง Locker","LOCKERS"},
+ {"Auto Polisher","ขัดบอลอัตโนมัติ","Auto Polisher"}, {"ขัดก่อนขาย • ขายตามปกติหากยังไม่ปลดล็อก",nil,"Polish before selling; sell normally while locked"},
+ {"ใช้ 1 ขวดเมื่อบัฟหมด: +1 Luck / 5 นาที",nil,"Use one when the buff expires: +1 Luck for 5 minutes"},
+ {"ใช้ 1 ขวดเมื่อบัฟหมด: x2 Cash / 5 นาที",nil,"Use one when the buff expires: x2 Cash for 5 minutes"},
+ {"ใช้เฉพาะกำลังสุ่ม Grade/Trait",nil,"Use only while rolling Grade/Trait"},
+ {"ใช้เฉพาะกำลังสุ่มและอยู่ไกลสถานี",nil,"Use only while rolling away from the station"},
+ {"ใช้ Cash เท่านั้น • ไม่เรียกหน้าซื้อ Robux\nซื้อครั้งละ 1 และรอข้อมูลยืนยันก่อนทำต่อ",nil,"Cash only; no Robux purchase prompts.\nBuy one item, then wait for confirmation."},
+ {"งบสูงสุดต่อรายการ (% เงินสด)",nil,"Maximum per item (% of cash)"}, {"เงินสดที่ต้องเหลือ",nil,"Minimum cash to keep"},
+ {"ซื้อ Locker จากตลาด",nil,"Buy market Lockers"},
+ {"ใช้ตัวกรอง Farm • ซื้อเฉพาะที่ดีกว่ากล่องต่ำสุดเมื่อครบ 10",nil,"Uses Farm filters; only improves the weakest when holding 10"},
+ {"UNAVAILABLE • เซิร์ฟเวอร์นี้ไม่มีคำสั่งซื้อ Market","ไม่พร้อมใช้ • เซิร์ฟเวอร์นี้ไม่มีคำสั่งซื้อ Market","UNAVAILABLE: no market purchase command on this server"},
+ {"ซื้อ Ball Skin",nil,"Buy Ball Skins"}, {"ซื้อเมื่อมีตัวใน Base ที่ได้ประโยชน์ • ไม่สะสมซ้ำ",nil,"Buy only when a base unit benefits; no duplicate stockpiling"},
+ {"ใส่ Ball Skin ที่ดีกว่า",nil,"Equip better Ball Skins"}, {"เปลี่ยนแล้วสกินเดิมถูกทำลาย • ข้าม Favorite",nil,"Replaces and destroys the old skin; skips Favorites"},
+ {"เลือก Striker สำรองก่อนเปิดสุ่ม • กันตัวที่เลือกจากการขาย/วาง\nการสุ่มอาจได้ค่าต่ำลง • หยุดเมื่อถึงเป้าหมายหรือครบจำนวน",nil,"Select a spare Striker; it is protected from selling/placement.\nRolls can reduce stats. Stops at your target or roll limit."},
+ {"ยังไม่ได้เลือก Striker สำรอง",nil,"No spare Striker selected"}, {"ยังไม่ได้เลือก Striker",nil,"No Striker selected"},
+ {"เลือก Striker สำรองที่ Base สูงสุด",nil,"Select spare with highest base income"},
+ {"เปลี่ยนเป็นตัวสำรองถัดไป",nil,"Select next spare Striker"},
+ {"จำนวนสุ่มสูงสุด / ครั้งที่เปิด",nil,"Roll limit per activation"},
+ {"เป้าหมาย Grade (ตัวคูณเงิน)",nil,"Grade target (cash multiplier)"},
+ {"เป้าหมาย Trait (ตัวคูณเงิน)",nil,"Trait target (cash multiplier)"},
+ {"Grade: S = x3, SS = x6.5, UR = x14\nใช้ Grade/ Trait Token เท่านั้น • ไม่มีการเติม Token",nil,"Grade: S = x3, SS = x6.5, UR = x14\nUses owned Grade/Trait Tokens only; does not buy Tokens."},
+ {"Auto Grade","สุ่ม Grade อัตโนมัติ","Auto Grade"}, {"Auto Trait","สุ่ม Trait อัตโนมัติ","Auto Trait"},
+ {"หยุดเมื่อถึงตัวคูณเป้าหมาย / โทเคนหมด",nil,"Stops at the target multiplier or when Tokens run out"},
+ {"หยุดเมื่อถึงตัวคูณเงินเป้าหมาย / โทเคนหมด",nil,"Stops at the cash multiplier target or when Tokens run out"},
+ {"ปล่อยตัวที่เลือกกลับเข้า Auto Team",nil,"Release selected unit back to Auto Team"},
+ {"จัดทีมตาม Damage × Health • ใช้ Auto Battle ของเกม\nหยุดหลักหรือปิดปุ่ม จะปิด Auto Battle ของรอบที่สคริปต์ดูแล",nil,"Ranks by Damage × Health; uses the game's Auto Battle.\nPausing disables Auto Battle for the round managed here."},
+ {"Auto Best Team + Battle","จัดทีมและต่อสู้อัตโนมัติ","Auto Best Team + Battle"},
+ {"เลือกทีมใหม่เมื่อเริ่มรอบ • ตรวจเงื่อนไข Tower",nil,"Selects a team each round; checks Tower requirements"},
+ {"ESP ตำแหน่งกิจกรรม",nil,"Event location ESP"}, {"Variant Token • Item Rain • จุดโบนัส Obby",nil,"Variant Tokens / Item Rain / Obby bonus locations"},
+ {"เก็บของกิจกรรมเมื่อใกล้",nil,"Collect nearby event items"}, {"เก็บในระยะ 5 studs • ไม่ส่งคำขอซ้ำถี่",nil,"Collect within 5 studs; limits repeat requests"},
+ {"รับ Obby Bonus เมื่อถึงจุด",nil,"Claim Obby bonus at its location"}, {"รับเฉพาะเมื่อมีสิทธิ์ • แสดงเวลารอ",nil,"Only claims when eligible; shows cooldowns"},
+ {"พร้อมใช้งาน • ระบบเสริมเริ่มต้น OFF",nil,"Ready. Additional features start OFF."},
+ {"กำลังตรวจสถานะ…",nil,"Checking status…"},
+ {"RUNNING   •   CLICK TO PAUSE","กำลังทำงาน   •   คลิกเพื่อหยุด","RUNNING   •   CLICK TO PAUSE"},
+ {"PAUSED   •   CLICK TO RESUME","หยุดชั่วคราว   •   คลิกเพื่อเริ่ม","PAUSED   •   CLICK TO RESUME"},
+ {"ON","เปิด","ON"}, {"OFF","ปิด","OFF"},
+ {"Keeping best 10 spares (base excluded)","เก็บสำรองดีที่สุด 10 ตัว (ไม่นับ Base)",nil},
+ {"Extra strikers protected by Favorite / Training","ตัวส่วนเกินถูกกันไว้ด้วย Favorite / Training",nil},
+ {"Sold surplus; keeping best 10 spares","ขายส่วนเกินแล้ว • เก็บสำรองดีที่สุด 10 ตัว",nil},
+ {"Waiting for sale confirmation","รอยืนยันผลการขาย",nil}, {"Selling surplus striker","กำลังขาย Striker ส่วนเกิน",nil},
+ {"Waiting for striker tool","รอไอเทม Striker ในกระเป๋า",nil}, {"Sale confirmed","ยืนยันการขายแล้ว",nil},
+ {"Checking locker sale result","กำลังตรวจผลขาย Locker",nil}, {"Sold lowest locker; keeping best 10","ขายกล่องต่ำสุดแล้ว • เก็บดีที่สุด 10 กล่อง",nil},
+ {"Keeping best 10 lockers","เก็บ Locker ดีที่สุด 10 กล่อง",nil}, {"Extra lockers are favorited","กล่องส่วนเกินเป็น Favorite",nil},
+ {"Purchase unconfirmed; waiting for next spawn","ยังไม่ยืนยันการซื้อ • รอกล่องถัดไป",nil},
+ {"Waiting: locker inventory is full","รอ: กระเป๋า Locker เต็ม",nil}, {"Waiting: cash for ","รอเงินซื้อ ",nil},
+ {"New locker tier unlocked","ปลดล็อกระดับ Locker ใหม่แล้ว",nil},
+ {"Buying ","กำลังซื้อ ",nil}, {"Bought ","ซื้อแล้ว ",nil},
+ {"รอปลดล็อก • ขายบอลตามปกติ",nil,"Waiting for unlock; selling balls normally"},
+ {"ไม่พบเครื่องใน Base",nil,"No Polisher found in your base"},
+ {"ฝากยังไม่ยืนยัน • ตรวจระยะเครื่อง",nil,"Deposit unconfirmed; check distance to Polisher"},
+ {"Unavailable: เซิร์ฟเวอร์นี้ไม่มีระบบซื้อ Market","ไม่พร้อมใช้: เซิร์ฟเวอร์นี้ไม่มีระบบซื้อ Market","Unavailable: this server has no market purchase command"},
+ {"รอจัดกระเป๋า",nil,"Waiting for inventory operations"}, {"รอขายส่วนเกินก่อนซื้อ",nil,"Waiting for surplus sales before buying"},
+ {"รอสต็อก / งบ / กล่องที่ดีกว่า",nil,"Waiting for stock / budget / better Lockers"},
+ {"คำสั่งซื้อยังไม่ยืนยัน",nil,"Purchase unconfirmed"}, {"ใส่สกินยังไม่ยืนยัน",nil,"Skin equip unconfirmed"}, {"ซื้อสกินยังไม่ยืนยัน",nil,"Skin purchase unconfirmed"},
+ {"รอสกินที่ดีกว่า / สต็อก / งบ",nil,"Waiting for better skins / stock / budget"},
+ {"ปิดการสุ่มก่อนเปลี่ยนตัว",nil,"Stop rolling before changing the unit"},
+ {"ไม่มีตัวสำรอง • นำตัวออกจาก Base ก่อน",nil,"No spare unit; remove one from your base first"},
+ {"เลือกตัวแล้ว • พร้อมตั้งเป้าหมาย",nil,"Unit selected; set your targets"},
+ {"เลือก Striker สำรองก่อน",nil,"Select a spare Striker first"}, {"นำตัวที่เลือกออกจาก Base ก่อน",nil,"Remove the selected unit from your base first"},
+ {"หยุด: ตัวนี้เป็น Favorite",nil,"Stopped: this unit is a Favorite"},
+ {"เลือกตัว → ตั้งเป้าหมาย → เปิด Auto Grade/Trait",nil,"Select unit → Set targets → Enable Auto Grade/Trait"},
+ {"ยังไม่มี Striker พร้อมเข้าทีม",nil,"No Striker available for the team"}, {"เริ่มรอบยังไม่ยืนยัน",nil,"Battle start unconfirmed"},
+ {"เลือก Tower แล้วเปิด Auto Best Team",nil,"Select a Tower, then enable Auto Best Team"},
+ {" ถึงเป้าหมายแล้ว",nil," target reached"}, {" ครบจำนวนที่กำหนด",nil," roll limit reached"},
+ {" Token หมด",nil," Tokens depleted"}, {"ไปสถานี ",nil,"Go to the "}, {" หรือเปิด Bluetooth Potion",nil," station or enable Bluetooth Potion"},
+ {" • ยืนยันแล้ว",nil," • Confirmed"}, {" • ไม่ยืนยัน: หยุด",nil," • Unconfirmed: stopped"},
+ {" • ชั้น ",nil," • Floor "}, {" • เริ่มทีม ",nil," • Started team of "}, {" ตัว",nil," units"},
+ {"รอขัด ",nil,"Pending polish "}, {" • ขัดแล้ว ",nil," • Polished "},
+ {"ยังไม่ยืนยัน ",nil,"Unconfirmed: "}, {"ใช้ ",nil,"Used "}, {"ซื้อ ",nil,"Bought "}, {"ใส่ ",nil,"Equipped "}, {" แล้ว",nil," successfully"},
+ {"OFF / ยังไม่เริ่ม","ปิด / ยังไม่เริ่ม","OFF / Not started"},
+ {"Checking rewards","กำลังตรวจรางวัล",nil}, {"Offline earnings confirmed","รับรายได้ออฟไลน์แล้ว",nil},
+ {"Index rewards confirmed: +","รับรางวัล Index แล้ว: +",nil}, {"Daily login confirmed","รับรางวัลล็อกอินแล้ว",nil},
+ {"Playtime reward ","รางวัลเวลาเล่น ",nil}, {" confirmed"," ยืนยันแล้ว",nil},
+ {"Restock: ","เติมสต็อกใน: ",nil}, {"Last error: ","ข้อผิดพลาดล่าสุด: ",nil},
+ {"SpareStrikers:","Striker สำรอง:",nil}, {"Polisher:","เครื่องขัด:",nil}, {"Potions:","ยา:",nil},
+ {"Market:","ตลาด:",nil}, {"Skins:","สกิน:",nil}, {"Training:","การฝึก:",nil},
+ {"Tower:","หอคอย:",nil}, {"Events:","กิจกรรม:",nil}, {"Rewards:","รางวัล:",nil},
+ {" | sold "," | ขายแล้ว ",nil}, {" | spares "," | สำรอง ",nil},
+ {"BASE      ","ฐาน      ",nil}, {"TEAM      ","ทีม      ",nil}, {"QUEUE    ","คิว    ",nil},
+ {"GROW     ","พัฒนา     ",nil}, {"LUCK      ","โชค      ",nil},
+ {" occupied"," ใช้งาน",nil}, {" free"," ว่าง",nil}, {" strikers"," ตัว",nil}, {" lockers"," กล่อง",nil},
+ {" waiting"," รอ",nil}, {" opened"," เปิดแล้ว",nil}, {" upgrades"," อัปเกรด",nil}, {" swaps"," เปลี่ยนตัว",nil},
+ {" purchases"," ซื้อแล้ว",nil}, {"errors ","ข้อผิดพลาด ",nil},
+ {"เลือกภาษา",nil,"Choose language"},
+ {"เปลี่ยนภาษาได้ทันที โดยไม่หยุดฟาร์ม\nจำภาษาที่เลือกเมื่อรันสคริปต์ใหม่ในเกมรอบนี้",nil,"Switch instantly without stopping the farm.\nYour choice is kept when rerunning in this game session."},
+ {"ภาษาปัจจุบัน: ไทย",nil,"Current language: English"},
+}
+local localeExact={} for _,r in localeRows do localeExact[r[1]]=r end
+local localized=setmetatable({},{__mode="k"})
+local function translate(source)
+ local index=language=="en" and 3 or 2
+ local exact=localeExact[source] if exact then return exact[index] or source end
+ -- Match only the original string, never translated output (avoids cascading substitutions).
+ local out={} local cursor=1
+ while cursor<=#source do
+ local first,last,row
+ for _,r in localeRows do
+ if r[index] then
+ local a,b=string.find(source,r[1],cursor,true)
+ if a and (r[1]=="ON" or r[1]=="OFF") and (string.sub(source,a-1,a-1):match("[%w_]") or string.sub(source,b+1,b+1):match("[%w_]")) then a=nil end
+ if a and (not first or a<first or (a==first and b>last)) then first,last,row=a,b,r end
+ end
+ end
+ if not first then table.insert(out,string.sub(source,cursor)) break end
+ table.insert(out,string.sub(source,cursor,first-1)) table.insert(out,row[index]) cursor=last+1
+ end
+ return table.concat(out)
+end
+local function bindLanguage(o)
+ if not (o:IsA("TextLabel") or o:IsA("TextButton")) then return end
+ local entry={source=o.Text,rendered=nil} localized[o]=entry
+ local function render()
+ entry.rendered=translate(entry.source)
+ if o.Text~=entry.rendered then o.Text=entry.rendered end
+ end
+ local connection=o:GetPropertyChangedSignal("Text"):Connect(function()
+ if o.Text~=entry.rendered then entry.source=o.Text render() end
+ end)
+ table.insert(connections,connection)
+ render()
+end
+local languageRefresh
+local function setLanguage(value)
+ if value~="th" and value~="en" then return end
+ language=value G.BlueFarmLanguage=value S.language=value
+ for o,e in localized do if o.Parent then e.rendered=translate(e.source) o.Text=e.rendered end end
+ if languageRefresh then languageRefresh() end
+end
+S.language=language
+S.setLanguage=setLanguage
+
+local pageColumns={}
+local themeTargets=setmetatable({},{__mode="k"})
+local function make(class,parent,props)
+ local o=Instance.new(class) for k,v in props do o[k]=v end o.Parent=parent bindLanguage(o) return o
+ local columns=pageColumns[parent]
+ if columns and (class=="TextLabel" or class=="TextButton" or class=="Frame") then
+ local index=columns.count==1 and 1 or (columns.heights[1]<=columns.heights[2] and 1 or 2)
+ columns.heights[index]+=(props.Size and props.Size.Y.Offset or 30)+8
+ parent=columns[index]
+ end
+ local o=Instance.new(class) for k,v in props do
+ o[k]=v
+ if typeof(v)=="Color3" and (v==blue or v==Color3.fromRGB(0,171,190)) then
+ themeTargets[o]=themeTargets[o] or {} themeTargets[o][k]=true
+ end
+ end o.Parent=parent bindLanguage(o) return o
+end
+local function round(o,r) make("UICorner",o,{CornerRadius=UDim.new(0,r or 8)}) end
+local function round(o,r)
+ make("UICorner",o,{CornerRadius=UDim.new(0,r or 8)})
+ if o:IsA("TextButton") then
+ -- Neutral shading multiplies the chosen theme instead of replacing its hue.
+ make("UIGradient",o,{Name="DepthShading",Rotation=90,Color=ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.new(1,1,1)),ColorSequenceKeypoint.new(0.48,Color3.fromRGB(242,244,247)),ColorSequenceKeypoint.new(1,Color3.fromRGB(207,212,222))})})
+ local edge=make("UIStroke",o,{Name="SurfaceEdge",ApplyStrokeMode=Enum.ApplyStrokeMode.Border,Color=Color3.new(1,1,1),Thickness=1,Transparency=0.88})
+ table.insert(connections,o.MouseEnter:Connect(function()if edge.Parent then edge.Transparency=0.62 end end))
+ table.insert(connections,o.MouseLeave:Connect(function()if edge.Parent then edge.Transparency=0.88 end end))
+ elseif o:IsA("TextBox") then
+ make("UIStroke",o,{Name="InsetEdge",Color=Color3.new(0,0,0),Thickness=1,Transparency=0.40})
+ make("UIGradient",o,{Rotation=90,Color=ColorSequence.new(Color3.fromRGB(215,218,225),Color3.new(1,1,1))})
+ end
+end
+local function label(parent,text,height)
+ return make("TextLabel",parent,{Size=UDim2.new(1,-12,0,height or 28),BackgroundTransparency=1,Text=text,TextColor3=Color3.fromRGB(209,222,238),Font=Enum.Font.Gotham,TextSize=13,TextWrapped=true,TextXAlignment=Enum.TextXAlignment.Left,TextYAlignment=Enum.TextYAlignment.Center})
+end
+local panel=make("Frame",gui,{Name="Dashboard",Size=UDim2.fromOffset(680,590),Position=UDim2.fromOffset(24,48),BackgroundColor3=Color3.fromRGB(8,12,19),BorderSizePixel=0}) round(panel,12)
+make("UIStroke",panel,{Color=blue,Thickness=2})
+local panel=make("Frame",gui,{Name="Dashboard",Size=UDim2.fromOffset(900,620),Position=UDim2.fromOffset(24,48),BackgroundColor3=Color3.fromRGB(24,25,29),BorderSizePixel=0}) round(panel,8)
+make("UIStroke",panel,{Color=Color3.fromRGB(68,91,103),Thickness=1})
+do
+ -- Layered, translucent silhouettes create a soft shadow without image assets.
+ for i=1,6 do
+ local spread=i*3
+ local shadow=Instance.new("Frame") shadow.Name="WindowShadow"..i shadow.ZIndex=0 shadow.BorderSizePixel=0
+ shadow.BackgroundColor3=Color3.new(0,0,0) shadow.BackgroundTransparency=0.94
+ shadow.Position=UDim2.fromOffset(-spread,6-spread) shadow.Size=UDim2.new(1,spread*2,1,spread*2) shadow.Parent=panel
+ local corner=Instance.new("UICorner") corner.CornerRadius=UDim.new(0,8+spread) corner.Parent=shadow
+ end
+end
+local sidebar=make("Frame",panel,{Name="Sidebar",Size=UDim2.new(0,162,1,0),BackgroundColor3=Color3.fromRGB(53,62,75),BorderSizePixel=0}) round(sidebar,8)
+local sidebarGradient=make("UIGradient",sidebar,{Color=ColorSequence.new(Color3.fromRGB(78,111,122),Color3.fromRGB(53,57,72)),Rotation=90})
+local brand=label(sidebar,"◈  Fyrelith",50) brand.Position=UDim2.fromOffset(12,4) brand.Font=Enum.Font.GothamBold brand.TextColor3=blue brand.TextSize=23
+local sideFooter=label(sidebar,"by.Fyrelith\ndiscord.gg/kgbFFGWHwr",50) sideFooter.Position=UDim2.new(0,14,1,-59) sideFooter.TextSize=10
+local scale=make("UIScale",panel,{Scale=1})
+local header=label(panel,"BLUE FARM  /  CONTROL CENTER",38) header.Name="DragHeader" header.Position=UDim2.fromOffset(18,4) header.Size=UDim2.fromOffset(565,38) header.TextColor3=blue header.Font=Enum.Font.GothamBold header.TextSize=17 header.Active=true
+local header=label(panel,"BLUE LOCK FARM  /  discord.gg/kgbFFGWHwr",38) header.Name="DragHeader" header.Position=UDim2.fromOffset(175,4) header.Size=UDim2.fromOffset(565,38) header.TextColor3=blue header.Font=Enum.Font.GothamBold header.TextSize=17 header.Active=true
+local mini=make("TextButton",panel,{Name="Minimize",Position=UDim2.new(1,-45,0,8),Size=UDim2.fromOffset(32,28),Text="−",TextSize=20,BackgroundColor3=Color3.fromRGB(25,40,58),TextColor3=blue,BorderSizePixel=0}) round(mini)
+local credit=make("TextLabel",panel,{Name="AuthorCredit",Position=UDim2.new(1,-125,0,8),Size=UDim2.fromOffset(70,28),BackgroundTransparency=1,Text="by.Xepz",TextSize=12,Font=Enum.Font.GothamMedium,TextColor3=blue,TextXAlignment=Enum.TextXAlignment.Right})
+local button=make("TextButton",panel,{Name="Toggle",Position=UDim2.fromOffset(18,48),Size=UDim2.new(1,-36,0,34),BackgroundColor3=Color3.fromRGB(15,72,110),TextColor3=Color3.fromRGB(175,230,255),Font=Enum.Font.GothamBold,TextSize=13,BorderSizePixel=0}) round(button)
+local credit=make("TextLabel",panel,{Name="AuthorCredit",Position=UDim2.new(1,-145,0,8),Size=UDim2.fromOffset(90,28),BackgroundTransparency=1,Text="by.Fyrelith",TextSize=12,Font=Enum.Font.GothamMedium,TextColor3=blue,TextXAlignment=Enum.TextXAlignment.Right})
+local button=make("TextButton",panel,{Name="Toggle",Position=UDim2.fromOffset(175,48),Size=UDim2.new(1,-187,0,34),BackgroundColor3=Color3.fromRGB(15,72,110),TextColor3=Color3.fromRGB(175,230,255),Font=Enum.Font.GothamBold,TextSize=13,BorderSizePixel=0}) round(button)
+button.Activated:Connect(function() S.enabled=not S.enabled end)
+local nav=make("Frame",panel,{Name="Navigation",Position=UDim2.fromOffset(18,96),Size=UDim2.fromOffset(133,446),BackgroundTransparency=1})
+local nav=make("Frame",panel,{Name="Navigation",Position=UDim2.fromOffset(9,88),Size=UDim2.fromOffset(145,446),BackgroundTransparency=1})
+make("UIListLayout",nav,{Padding=UDim.new(0,7),SortOrder=Enum.SortOrder.LayoutOrder})
+local pages={} local tabs={} local pageRefresh={}
+local menuFade=make("Frame",panel,{Name="MenuFade",Position=UDim2.fromOffset(175,96),Size=UDim2.new(1,-187,0,474),BackgroundColor3=panel.BackgroundColor3,BackgroundTransparency=1,BorderSizePixel=0,ZIndex=50,Visible=false,Active=true})
+local menuTransition=0 local menuTween
+local function switchPage(name)
+ if not pages[name] then return end
+ if pages[name].Visible and not menuFade.Visible then return end
+ menuTransition+=1 local token=menuTransition
+ if menuTween then menuTween:Cancel() end
+ menuFade.Visible=true
+ task.spawn(function()
+ local tweenService=game:GetService("TweenService")
+ local fadeOut=tweenService:Create(menuFade,TweenInfo.new(0.10,Enum.EasingStyle.Quad,Enum.EasingDirection.Out),{BackgroundTransparency=0})
+ menuTween=fadeOut fadeOut:Play() fadeOut.Completed:Wait()
+ if token~=menuTransition or not gui.Parent then return end
+ for n,p in pages do p.Visible=n==name end
+ if S.refreshNavigationTheme then S.refreshNavigationTheme() end
+ local fadeIn=tweenService:Create(menuFade,TweenInfo.new(0.18,Enum.EasingStyle.Quad,Enum.EasingDirection.Out),{BackgroundTransparency=1})
+ menuTween=fadeIn fadeIn:Play() fadeIn.Completed:Wait()
+ if token~=menuTransition or not gui.Parent then return end
+ menuFade.Visible=false menuTween=nil
+ end)
+end
+S.switchPage=switchPage
+table.insert(connections,gui.Destroying:Connect(function()menuTransition+=1 if menuTween then menuTween:Cancel() end end))
+local function refreshNavigationTheme()
+ local dark=Color3.fromRGB(20,23,29)
+ sidebar.BackgroundColor3=Color3.new(1,1,1)
+ sidebarGradient.Color=ColorSequence.new(dark:Lerp(blue,0.30),dark:Lerp(blue,0.08))
+ for name,tab in tabs do
+ local selected=pages[name].Visible
+ local background=dark:Lerp(blue,selected and 0.75 or 0.19)
+ tab.BackgroundColor3=background
+ local function linear(v)return v<=0.04045 and v/12.92 or ((v+0.055)/1.055)^2.4 end
+ local l=0.2126*linear(background.R)+0.7152*linear(background.G)+0.0722*linear(background.B)
+ tab.TextColor3=(l+0.05)/0.05>=1.05/(l+0.05) and Color3.fromRGB(12,15,20) or Color3.fromRGB(242,247,250)
+ end
+end
+S.refreshNavigationTheme=refreshNavigationTheme
+local function page(name,title)
+ local sc=make("ScrollingFrame",panel,{Name=name,Position=UDim2.fromOffset(165,96),Size=UDim2.new(1,-183,0,446),BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=4,ScrollBarImageColor3=blue,CanvasSize=UDim2.new(),AutomaticCanvasSize=Enum.AutomaticSize.Y,Visible=false})
+ make("UIListLayout",sc,{Padding=UDim.new(0,8),SortOrder=Enum.SortOrder.LayoutOrder})
+ local sc=make("ScrollingFrame",panel,{Name=name,Position=UDim2.fromOffset(175,96),Size=UDim2.new(1,-187,0,474),BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=3,ScrollBarImageColor3=blue,CanvasSize=UDim2.new(),AutomaticCanvasSize=Enum.AutomaticSize.Y,Visible=false})
+ make("UIListLayout",sc,{Padding=UDim.new(0,10),FillDirection=Enum.FillDirection.Horizontal,VerticalAlignment=Enum.VerticalAlignment.Top,SortOrder=Enum.SortOrder.LayoutOrder})
+ make("UIPadding",sc,{PaddingBottom=UDim.new(0,12),PaddingRight=UDim.new(0,8)})
+ local count=(name=="Setting" or name=="Boosts" or name=="Overview" or name=="Training") and 1 or 2
+ local columns={heights={0,0},count=count}
+ for i=1,count do
+ local column=make("Frame",sc,{Name="Section"..i,LayoutOrder=i,Size=UDim2.new(1/count,-6,0,0),AutomaticSize=Enum.AutomaticSize.Y,BackgroundColor3=Color3.fromRGB(29,30,34),BorderSizePixel=0}) round(column,5)
+ make("UIStroke",column,{Color=Color3.fromRGB(44,46,51),Thickness=1})
+ make("UIPadding",column,{PaddingLeft=UDim.new(0,9),PaddingTop=UDim.new(0,8),PaddingBottom=UDim.new(0,10)})
+ make("UIListLayout",column,{Padding=UDim.new(0,8),SortOrder=Enum.SortOrder.LayoutOrder})
+ local title=label(column,count==1 and name or ("Section 0"..i.."   /   "..name),28) title.TextColor3=Color3.fromRGB(148,151,158) title.TextSize=12
+ columns[i]=column
+ end
+ pageColumns[sc]=columns
+ local b=make("TextButton",nav,{Name=name,Size=UDim2.new(1,0,0,42),Text=title,Font=Enum.Font.GothamMedium,TextSize=12,TextColor3=Color3.fromRGB(180,198,220),BackgroundColor3=Color3.fromRGB(17,25,37),BorderSizePixel=0}) round(b)
+ local b=make("TextButton",nav,{Name=name,Size=UDim2.new(1,0,0,42),Text=title,Font=Enum.Font.GothamMedium,TextSize=12,TextColor3=Color3.fromRGB(180,198,220),BackgroundColor3=Color3.fromRGB(55,65,77),BorderSizePixel=0}) round(b)
+ pages[name]=sc tabs[name]=b
+ b.Activated:Connect(function() for n,p in pages do p.Visible=n==name tabs[n].BackgroundColor3=n==name and Color3.fromRGB(17,65,100) or Color3.fromRGB(17,25,37) end end)
+ b.Activated:Connect(function()switchPage(name)end)
+ return sc
+end
+local home=page("Overview","ภาพรวม / Status")
+local farm=page("Farm","ฟาร์ม / Farm")
+local boost=page("Boosts","บัฟ / Boosts")
+local market=page("Market","ตลาด / Market")
+local training=page("Training","ฝึก / Training")
+local tower=page("Tower","ทีม / Tower")
+local events=page("Events","กิจกรรม / ESP")
+local langues=page("langues","langues")
+home.Visible=true tabs.Overview.BackgroundColor3=Color3.fromRGB(17,65,100)
+local langues=page("Setting","Setting")
+home.Visible=true refreshNavigationTheme()
+local function note(parent,text) return label(parent,text,52) end
+local function toggle(parent,key,title,description,owner)
+ owner=owner or X
+ local row=make("TextButton",parent,{Name=key,Size=UDim2.new(1,-6,0,68),BackgroundColor3=Color3.fromRGB(16,24,36),BorderSizePixel=0,Text="",AutoButtonColor=true}) round(row)
+ local row=make("TextButton",parent,{Name=key,Size=UDim2.new(1,-6,0,68),BackgroundColor3=Color3.fromRGB(29,30,34),BorderSizePixel=0,Text="",AutoButtonColor=true}) round(row)
+ local t=label(row,title,27) t.Position=UDim2.fromOffset(12,3) t.Size=UDim2.new(1,-88,0,27) t.Font=Enum.Font.GothamBold
+ local d=label(row,description,29) d.Position=UDim2.fromOffset(12,32) d.Size=UDim2.new(1,-24,0,29) d.TextSize=11 d.TextColor3=Color3.fromRGB(139,158,183)
+ d.Name="Description"
+ local state=label(row,"",26) state.Position=UDim2.new(1,-66,0,5) state.Size=UDim2.fromOffset(58,26) state.Font=Enum.Font.GothamBold
+ local function refresh() state.Text=owner[key] and "ON" or "OFF" state.TextColor3=owner[key] and Color3.fromRGB(72,220,165) or Color3.fromRGB(130,145,167) end
+ local state=make("Frame",row,{Name="Switch",Position=UDim2.new(1,-48,0,9),Size=UDim2.fromOffset(34,18),BorderSizePixel=0}) round(state,9)
+ local thumb=make("Frame",state,{Name="Thumb",Size=UDim2.fromOffset(12,12),Position=UDim2.fromOffset(3,3),BackgroundColor3=Color3.fromRGB(240,243,245),BorderSizePixel=0}) round(thumb,6)
+ local function refresh() state.BackgroundColor3=owner[key] and blue or Color3.fromRGB(57,59,65) thumb.Position=UDim2.fromOffset(owner[key] and 19 or 3,3) end
+ row.Activated:Connect(function() owner[key]=not owner[key] refresh() end) refresh() table.insert(pageRefresh,refresh)
+ return row
+end
+local function field(parent,key,title,min,max)
+ local row=make("Frame",parent,{Size=UDim2.new(1,-6,0,44),BackgroundColor3=Color3.fromRGB(16,24,36),BorderSizePixel=0}) round(row)
+ local row=make("Frame",parent,{Size=UDim2.new(1,-6,0,44),BackgroundColor3=Color3.fromRGB(29,30,34),BorderSizePixel=0}) round(row)
+ local t=label(row,title,40) t.Position=UDim2.fromOffset(12,0) t.Size=UDim2.new(1,-122,0,40)
+ local box=make("TextBox",row,{Name=key,Position=UDim2.new(1,-106,0,6),Size=UDim2.fromOffset(94,32),Text=tostring(X[key]),ClearTextOnFocus=false,BackgroundColor3=Color3.fromRGB(26,42,60),TextColor3=blue,Font=Enum.Font.Gotham,TextSize=13,BorderSizePixel=0}) round(box)
+ local box=make("TextBox",row,{Name=key,Position=UDim2.new(1,-106,0,6),Size=UDim2.fromOffset(94,32),Text=tostring(X[key]),ClearTextOnFocus=false,BackgroundColor3=Color3.fromRGB(65,67,73),TextColor3=Color3.fromRGB(240,242,245),Font=Enum.Font.Gotham,TextSize=13,BorderSizePixel=0}) round(box)
+ box.FocusLost:Connect(function() local n=tonumber(box.Text) if n and n==n and n<math.huge then X[key]=math.clamp(n,min,max) end box.Text=tostring(X[key]) end)
+ table.insert(pageRefresh,function()if not box:IsFocused() then box.Text=tostring(X[key]) end end)
+ return row
+end
+local function action(parent,name,callback)
+ local b=make("TextButton",parent,{Size=UDim2.new(1,-6,0,38),Text=name,TextSize=12,Font=Enum.Font.GothamMedium,TextColor3=blue,BackgroundColor3=Color3.fromRGB(19,44,65),BorderSizePixel=0}) round(b) b.Activated:Connect(callback) return b
+ local b=make("TextButton",parent,{Size=UDim2.new(1,-6,0,38),Text=name,TextSize=12,Font=Enum.Font.GothamMedium,TextColor3=Color3.fromRGB(245,255,255),BackgroundColor3=Color3.fromRGB(0,171,190),BorderSizePixel=0}) round(b) b.Activated:Connect(callback) return b
+end
+label(langues,"เลือกภาษา",32)
+note(langues,"เปลี่ยนภาษาได้ทันที โดยไม่หยุดฟาร์ม\nจำภาษาที่เลือกเมื่อรันสคริปต์ใหม่ในเกมรอบนี้")
+local thaiChoice=action(langues,"ไทย",function() setLanguage("th") end) thaiChoice.Name="Thai"
+local englishChoice=action(langues,"English",function() setLanguage("en") end) englishChoice.Name="English"
+local languageStatus=label(langues,"ภาษาปัจจุบัน: ไทย",32) languageStatus.Name="CurrentLanguage"
+local configInfo=label(langues,"",85) configInfo.Name="ConfigStatus"
+local bindingKey=false
+local keyButton=action(langues,"UI Key: "..X.uiKey,function() bindingKey=true end)
+keyButton.Name="BindUIKey"
+toggle(langues,"showIcon","แสดงไอคอน F / Show F Icon","คลิกไอคอนเพื่อเปิดหรือย่อ UI / Click to open or minimize")
+note(langues,"UI Color • ลากบนวงล้อเพื่อเลือกสี / Drag to choose color")
+do
+ local holder=make("Frame",langues,{Name="ColorPicker",Size=UDim2.new(1,-6,0,254),BackgroundTransparency=1})
+ local wheel=make("Frame",holder,{Name="ColorWheel",Position=UDim2.fromOffset(8,4),Size=UDim2.fromOffset(192,192),BackgroundTransparency=1,Active=true})
+ local hue,saturation,value=Color3.fromRGB(X.themeR,X.themeG,X.themeB):ToHSV()
+ -- Draw locally so the picker has no external image or network dependency.
+ for y=0,191 do
+ local dy=(y+0.5-96)/96
+ local half=math.sqrt(math.max(0,1-dy*dy))
+ local points={}
+ for x=0,19 do
+ local dx=(x/19*2-1)*half
+ local radius=math.min(1,math.sqrt(dx*dx+dy*dy))
+ table.insert(points,ColorSequenceKeypoint.new(x/19,Color3.fromHSV((math.atan2(dy,dx)/(2*math.pi))%1,radius,1)))
+ end
+ local strip=make("Frame",wheel,{Position=UDim2.fromOffset(96-half*96,y),Size=UDim2.fromOffset(half*192,1),BorderSizePixel=0,BackgroundColor3=Color3.new(1,1,1),Active=false})
+ themeTargets[strip]=nil
+ make("UIGradient",strip,{Color=ColorSequence.new(points)})
+ end
+ local cursor=make("Frame",wheel,{Name="Selection",AnchorPoint=Vector2.new(0.5,0.5),Size=UDim2.fromOffset(10,10),BackgroundTransparency=1,ZIndex=5}) round(cursor,5)
+ make("UIStroke",cursor,{Color=Color3.new(1,1,1),Thickness=2})
+ local preview=make("Frame",holder,{Name="Preview",Position=UDim2.fromOffset(222,16),Size=UDim2.fromOffset(70,70),BorderSizePixel=0}) round(preview,10)
+ local hex=label(holder,"",60) hex.Position=UDim2.fromOffset(220,94) hex.Size=UDim2.fromOffset(190,60)
+ local bar=make("Frame",holder,{Name="Brightness",Position=UDim2.fromOffset(8,218),Size=UDim2.new(1,-24,0,22),BackgroundColor3=Color3.new(1,1,1),BorderSizePixel=0,Active=true}) round(bar,5)
+ local gradient=make("UIGradient",bar,{Color=ColorSequence.new(Color3.new(0,0,0),Color3.fromHSV(hue,saturation,1))})
+ local marker=make("Frame",bar,{Size=UDim2.fromOffset(3,26),AnchorPoint=Vector2.new(0.5,0.5),BackgroundColor3=Color3.new(1,1,1),BorderSizePixel=0,ZIndex=5})
+ local activePointer local mode local wasScrolling
+ local function render()
+ local c=Color3.fromRGB(X.themeR,X.themeG,X.themeB)
+ hue,saturation,value=c:ToHSV()
+ cursor.Position=UDim2.fromScale(0.5+math.cos(hue*2*math.pi)*saturation*0.5,0.5+math.sin(hue*2*math.pi)*saturation*0.5)
+ preview.BackgroundColor3=c
+ hex.Text=string.format("#%02X%02X%02X\nBrightness / ความสว่าง",X.themeR,X.themeG,X.themeB)
+ gradient.Color=ColorSequence.new(Color3.new(0,0,0),Color3.fromHSV(hue,saturation,1))
+ marker.Position=UDim2.fromScale(value,0.5)
+ end
+ local function update(input)
+ local p=Vector2.new(input.Position.X,input.Position.Y)
+ if not gui.IgnoreGuiInset then local inset=game:GetService("GuiService"):GetGuiInset() p-=inset end
+ if mode=="wheel" then
+ local size=wheel.AbsoluteSize local centre=wheel.AbsolutePosition+size/2
+ local delta=p-centre
+ hue=(math.atan2(delta.Y,delta.X)/(2*math.pi))%1 saturation=math.clamp(delta.Magnitude/(size.X/2),0,1)
+ else value=math.clamp((p.X-bar.AbsolutePosition.X)/bar.AbsoluteSize.X,0,1) end
+ local c=Color3.fromHSV(hue,saturation,value)
+ X.themeR=math.round(c.R*255) X.themeG=math.round(c.G*255) X.themeB=math.round(c.B*255)
+ if S.applyUITheme then S.applyUITheme(c) end
+ -- Keep hue when brightness is zero instead of converting black back to HSV.
+ preview.BackgroundColor3=c cursor.Position=UDim2.fromScale(0.5+math.cos(hue*2*math.pi)*saturation*0.5,0.5+math.sin(hue*2*math.pi)*saturation*0.5)
+ gradient.Color=ColorSequence.new(Color3.new(0,0,0),Color3.fromHSV(hue,saturation,1)) marker.Position=UDim2.fromScale(value,0.5)
+ hex.Text=string.format("#%02X%02X%02X\nBrightness / ความสว่าง",X.themeR,X.themeG,X.themeB)
+ end
+ for _,entry in {{wheel,"wheel"},{bar,"brightness"}} do
+ table.insert(connections,entry[1].InputBegan:Connect(function(input)
+ if activePointer or (input.UserInputType~=Enum.UserInputType.MouseButton1 and input.UserInputType~=Enum.UserInputType.Touch) then return end
+ activePointer=input mode=entry[2] wasScrolling=langues.ScrollingEnabled langues.ScrollingEnabled=false update(input)
+ end))
+ end
+ table.insert(connections,UIS.InputChanged:Connect(function(input)
+ if activePointer and (input==activePointer or (activePointer.UserInputType==Enum.UserInputType.MouseButton1 and input.UserInputType==Enum.UserInputType.MouseMovement)) then update(input) end
+ end))
+ table.insert(connections,UIS.InputEnded:Connect(function(input)
+ if activePointer and (input==activePointer or (activePointer.UserInputType==Enum.UserInputType.MouseButton1 and input.UserInputType==Enum.UserInputType.MouseButton1)) then update(input) activePointer=nil langues.ScrollingEnabled=wasScrolling end
+ end))
+ table.insert(pageRefresh,function()if not activePointer then render() end end) render()
+end
+
+
+
+for _,preset in {{"Cyan",0,207,224},{"Blue",47,145,255},{"Purple",170,100,255},{"Pink",255,100,170},{"Green",55,220,150},{"Orange",255,160,60}} do
+ action(langues,preset[1],function()X.themeR=preset[2] X.themeG=preset[3] X.themeB=preset[4]end)
+end
+S.applyUITheme=function(color)
+ local function luminance(c)
+ local function linear(v)return v<=0.04045 and v/12.92 or ((v+0.055)/1.055)^2.4 end
+ return 0.2126*linear(c.R)+0.7152*linear(c.G)+0.0722*linear(c.B)
+ end
+ local function readable(background)
+ local l=luminance(background)
+ return (l+0.05)/0.05 >= 1.05/(l+0.05) and Color3.fromRGB(12,15,20) or Color3.fromRGB(248,250,252)
+ end
+ local dark=Color3.fromRGB(24,25,29)
+ local a,b=luminance(color),luminance(dark)
+ local accentText=(math.max(a,b)+0.05)/(math.min(a,b)+0.05)>=4.5 and color or Color3.fromRGB(240,245,250)
+ if blue~=color or not S.themeApplied then
+ S.themeApplied=true
+ blue=color
+ for obj,properties in themeTargets do if obj.Parent then
+ for property in properties do obj[property]=property=="TextColor3" and accentText or color end
+ if properties.BackgroundColor3 and (obj:IsA("TextButton") or obj:IsA("TextLabel") or obj:IsA("TextBox")) then obj.TextColor3=readable(color) end
+ end end
+ header.TextColor3=accentText brand.TextColor3=accentText credit.TextColor3=accentText mini.TextColor3=accentText
+ refreshNavigationTheme()
+ end
+end
+table.insert(pageRefresh,function()
+ keyButton.Text=bindingKey and "Press a key • Escape = Cancel" or "UI Key: "..X.uiKey
+ S.applyUITheme(Color3.fromRGB(math.clamp(tonumber(X.themeR) or 0,0,255),math.clamp(tonumber(X.themeG) or 207,0,255),math.clamp(tonumber(X.themeB) or 224,0,255)))
+end)
+S.styleSelection=function(target,selected)
+ local background=selected and blue or Color3.fromRGB(27,30,37):Lerp(blue,0.18)
+ target.BackgroundColor3=background
+ local function linear(v)return v<=0.04045 and v/12.92 or ((v+0.055)/1.055)^2.4 end
+ local l=0.2126*linear(background.R)+0.7152*linear(background.G)+0.0722*linear(background.B)
+ target.TextColor3=(l+0.05)/0.05>=1.05/(l+0.05) and Color3.fromRGB(12,15,20) or Color3.fromRGB(244,248,252)
+end
+S.refreshMasterStatus=function()
+ button.Text=S.enabled and "RUNNING   •   CLICK TO PAUSE" or "PAUSED   •   CLICK TO RESUME"
+ S.styleSelection(button,S.enabled)
+end
+button.Activated:Connect(function()S.refreshMasterStatus()end)
+task.spawn(function()
+ while S.running and gui.Parent do S.refreshMasterStatus() task.wait(0.05) end
+end)
+languageRefresh=function()
+ thaiChoice.Text=(language=="th" and "✓  " or "").."ไทย"
+ englishChoice.Text=(language=="en" and "✓  " or "").."English"
+ thaiChoice.BackgroundColor3=language=="th" and Color3.fromRGB(17,65,100) or Color3.fromRGB(19,44,65)
+ englishChoice.BackgroundColor3=language=="en" and Color3.fromRGB(17,65,100) or Color3.fromRGB(19,44,65)
+ thaiChoice.Text="ไทย"
+ englishChoice.Text="English"
+ S.styleSelection(thaiChoice,language=="th")
+ S.styleSelection(englishChoice,language=="en")
+end
+languageRefresh()
+table.insert(pageRefresh,languageRefresh)
+local stats=label(home,"",125) stats.Name="Stats"
+toggle(home,"antiAFK","Anti AFK • ป้องกันหลุดเมื่ออยู่นิ่ง","ทำงานเมื่อเกมตรวจว่าอยู่นิ่ง • ยังทำงานขณะพักฟาร์ม")
+note(home,"ปุ่มด้านบนหยุด/เริ่มทุกระบบ • ลากหัวหน้าต่างเพื่อย้าย\nปุ่ม − ย่อหน้าต่าง • RightShift ซ่อน/แสดง")
+local detail=label(home,"กำลังตรวจสถานะ…",245) detail.Name="FeatureStatus" detail.TextYAlignment=Enum.TextYAlignment.Top
+note(farm,"Auto Team: ใช้ Base สูงสุด • เติมช่องว่าง\nอัปเกรด Striker ทุกตัวที่เงินพอ • ใช้เงินได้เต็มยอด")
+toggle(farm,"autoEquip","Auto Equip Best • ใส่นักเตะดีที่สุด","เติมช่องว่างและเปลี่ยนตัวที่อ่อนกว่า • เทียบ Base ก่อนเลเวล")
+local conveyorBuyRow=toggle(farm,"autoBuy","ซื้อ Locker บนสายพาน","ใช้เงินเกม และตัวกรองด้านล่าง",config)
+toggle(farm,"spawnBestLocker","Spawn Best Locker","วางกล่องดีที่สุดจากกระเป๋าลง Base • รอเปิดพร้อมกันสูงสุด 5 กล่อง",config)
+toggle(farm,"sellSpareStrikers","เก็บ Striker สำรองดีที่สุด 10 ตัว","ไม่นับตัวใน Base • ขายส่วนเกิน • กัน Favorite/Training")
+toggle(farm,"autoSellLockers","เก็บ 10 กล่องที่ดีที่สุด","ขายส่วนเกิน • ไม่ขายรายการ Favorite",config)
+toggle(farm,"upgrades","อัปเกรด Base / Luck / ระบบเงิน","รวมอัปเกรดเครื่องขัดบอล เมื่อปลดล็อก")
+toggle(farm,"strikerUpgrade","Auto Upgrade Striker • อัพเวลนักเตะ","อัปเกรดนักเตะใน Base ทุกตัวที่เงินพอ • แยกจาก Base / Luck")
+toggle(farm,"fastOpen","เปิดกล่องที่พร้อม + ตัดแอนิเมชัน","ยังรอเวลาจริงของเซิร์ฟเวอร์")
+toggle(farm,"rewards","รับรางวัลอัตโนมัติ","Index • Playtime • Daily • Offline เมื่อมีสิทธิ์")
+toggle(farm,"variantFilter","กรอง Variant","OFF = รับทุก Variant",config)
+local function choiceList(title,names,selected)
+ label(farm,title,26)
+ local row=make("Frame",farm,{Size=UDim2.new(1,-6,0,math.ceil(#names/3)*30),BackgroundTransparency=1})
+ for i,name in names do
+ local b=make("TextButton",row,{Size=UDim2.new(1/3,-5,0,27),Position=UDim2.new((i-1)%3/3,0,0,math.floor((i-1)/3)*30),TextSize=10,Font=Enum.Font.Gotham,TextColor3=blue,BackgroundColor3=Color3.fromRGB(17,28,42),BorderSizePixel=0}) round(b,4)
+ local function refresh() b.Text=(selected[name]~=false and "✓ " or "– ")..name b.TextColor3=selected[name]~=false and blue or Color3.fromRGB(100,112,130) end
+ b.Activated:Connect(function() selected[name]=selected[name]==false refresh() end) refresh()
+ themeTargets[b]=nil
+ local function refresh()
+ local enabled=selected[name]~=false
+ local h,s,v=blue:ToHSV()
+ local bright=Color3.fromHSV(h,s,math.max(0.65,v))
+ b.Text=name
+ b.BackgroundColor3=enabled and bright or Color3.fromRGB(36,38,44)
+ if enabled then
+ local function linear(n)return n<=0.04045 and n/12.92 or ((n+0.055)/1.055)^2.4 end
+ local l=0.2126*linear(bright.R)+0.7152*linear(bright.G)+0.0722*linear(bright.B)
+ b.TextColor3=(l+0.05)/0.05>=1.05/(l+0.05) and Color3.fromRGB(12,15,20) or Color3.fromRGB(248,250,252)
+ else b.TextColor3=Color3.fromRGB(143,147,157) end
+ end
+ b.Activated:Connect(function() selected[name]=selected[name]==false refresh() end) refresh() table.insert(pageRefresh,refresh)
+ end
+end
+local variants={} for name in require(RS.Shared.Core.Storage.Game.VariantsLibrary) do if name~="Unknown" then table.insert(variants,name) end end table.sort(variants)
+local boxes={} for name in BL do table.insert(boxes,name) end table.sort(boxes,function(a,b)return BL[a].Index>BL[b].Index end)
+choiceList("VARIANTS",variants,config.variants) choiceList("LOCKERS",boxes,config.boxes)
+toggle(boost,"polisher","Auto Polisher","ขัดก่อนขาย • ขายตามปกติหากยังไม่ปลดล็อก")
+toggle(boost,"luckPotion","Luck Potion","ใช้ 1 ขวดเมื่อบัฟหมด: +1 Luck / 5 นาที")
+toggle(boost,"cashPotion","Cash Potion","ใช้ 1 ขวดเมื่อบัฟหมด: x2 Cash / 5 นาที")
+toggle(boost,"speedPotion","Token Speed Potion","ใช้เฉพาะกำลังสุ่ม Grade/Trait")
+toggle(boost,"bluetooth","Bluetooth Potion","ใช้เฉพาะกำลังสุ่มและอยู่ไกลสถานี")
+local potionInfo=label(boost,"",80)
+note(market,"เปิดร้านของเกมได้จากตรงนี้ ไม่ต้องเดินไปที่ร้าน")
+local openShop=action(market,"เปิดร้าน Ball Skins",function()
+ local native=P.PlayerGui:FindFirstChild("BallSkinGui")
+ local frame=native and native:FindFirstChild("MainFrame")
+ local previousVisible=panel.Visible local closeConnection
+ local function restoreShop()
+ S.shopOpen=false if panel.Parent then panel.Visible=previousVisible end
+ if closeConnection then closeConnection:Disconnect() closeConnection=nil end
+ end
+ local ok,err=pcall(function()
+ if not frame then error("BallSkinGui.MainFrame unavailable") end
+ S.shopOpen=true panel.Visible=false
+ closeConnection=frame:GetPropertyChangedSignal("Visible"):Connect(function()if not frame.Visible then restoreShop() end end)
+ table.insert(connections,closeConnection)
+ require(RS.Client.Core.Gui.BallSkinGuiClient).Open()
+ end)
+ if not ok then restoreShop() S.featureStatus.Shop="เปิดร้านไม่สำเร็จ: "..tostring(err) end
+end) openShop.Name="OpenBallSkinShop"
+note(market,"ซื้อ Ball Skin ทุกชนิดและทุกชิ้นที่มีสต็อก\nNO STOCK = ของหมด ระบบรอร้านเติมให้อัตโนมัติ")
+toggle(market,"fullMarketBalance","ใช้เงินได้เต็มยอด","ไม่จำกัด % และไม่กันเงินสำรอง • ซื้อได้เมื่อเงินพอ")
+local budgetPercent=field(market,"spendPercent","ซื้อได้ไม่เกินกี่ % ของเงินที่มี",1,100) budgetPercent.Name="BudgetPercent"
+local budgetReserve=field(market,"reserveCash","เงินขั้นต่ำที่ต้องเหลือหลังซื้อ",0,1e18) budgetReserve.Name="BudgetReserve"
+local budgetExample=note(market,"ตัวอย่าง: มีเงิน 1,000 ตั้ง 10% = ซื้อได้ไม่เกิน 100 ต่อชิ้น\nเงินสำรองคือเงินที่ต้องเหลือหลังซื้อ ใช้กับระบบซื้อในหน้านี้")
+local function refreshMarketBudget()
+ budgetPercent.Visible=not X.fullMarketBalance budgetReserve.Visible=not X.fullMarketBalance budgetExample.Visible=not X.fullMarketBalance
+end
+table.insert(pageRefresh,refreshMarketBudget) refreshMarketBudget()
+if R:FindFirstChild("MarketPurchaseCash") then
+ toggle(market,"market","ซื้อ Locker จากตลาด","ใช้ตัวกรอง Farm • ซื้อเฉพาะที่ดีกว่ากล่องต่ำสุดเมื่อครบ 10")
+else X.market=false note(market,"ตลาด Locker ใช้ไม่ได้ในเซิร์ฟเวอร์นี้\nซื้อ Locker อัตโนมัติบนสายพานได้ในหน้า Farm") end
+local skinBuyRow=toggle(market,"skinBuy","ซื้อ Ball Skin ทั้งหมดอัตโนมัติ","ซื้อทุกชนิดและซื้อซ้ำจนสต็อกหมด • ใช้ Cash เท่านั้น")
+toggle(market,"skinEquip","ใส่ Best Skin ตามอันดับนักเตะ","สกินดีที่สุดให้นักเตะ Base สูงสุดก่อน แล้วไล่ลงมา • ไม่ลดระดับสกิน")
+label(market,"สต็อกร้าน Ball Skins",30)
+local stockInfo=label(market,"",160) stockInfo.Name="BallSkinStock" stockInfo.TextYAlignment=Enum.TextYAlignment.Top
+local marketInfo=label(market,"",105) marketInfo.TextYAlignment=Enum.TextYAlignment.Top
+note(training,"เลือก Striker สำรองก่อนเปิดสุ่ม • กันตัวที่เลือกจากการขาย/วาง\nการสุ่มอาจได้ค่าต่ำลง • หยุดเมื่อถึงเป้าหมายหรือครบจำนวน")
+local selectedUnit=label(training,"ยังไม่ได้เลือก Striker",52)
+local selectButton=action(training,"Select • เลือก Striker จากหน้าของเกม",function() if S.openTrainingPicker then S.openTrainingPicker() end end)
+selectButton.Name="SelectStriker"
+toggle(training,"noRollLimit","No Limit • ไม่จำกัดจำนวนสุ่ม","หยุดเมื่อได้เป้าหมาย หรือเงิน/Token ไม่พอ")
+note(training,"ค่าจำนวนครั้งด้านล่างใช้เมื่อปิด No Limit เท่านั้น")
+field(training,"rollLimit","จำนวนสุ่มสูงสุด / ครั้งที่เปิด",1,500)
+toggle(training,"gradeCash","ใช้ Cash สำหรับ Grade","เปิด = ใช้เงินเกม • ปิด = ใช้ Grade Token • Trait ใช้ Token")
+toggle(training,"trainingTP","ไม่มี Bluetooth Potion → TP ไปสุ่มแล้วกลับ","เปิดเมื่อไม่มีบัฟและไม่มี Bluetooth Potion • รอผลสุ่มแล้วกลับจุดเดิม")
+toggle(training,"trainingTP","TP ไปสุ่มแล้วกลับ เมื่ออยู่นอกระยะ","ไม่มีบัฟระยะไกล: TP ไปสถานีแล้วกลับ • ไม่ใช้โพชั่นในกระเป๋า")
+local function targetGrid(title,names,key,display)
+ label(training,title,30)
+ local holder=make("Frame",training,{Name=key,Size=UDim2.new(1,-6,0,math.ceil(#names/3)*38),BackgroundTransparency=1})
+ local buttons={}
+ for i,name in names do
+ local b=make("TextButton",holder,{Name=name,Size=UDim2.new(1/3,-5,0,34),Position=UDim2.new((i-1)%3/3,0,0,math.floor((i-1)/3)*38),Text=display(name),Font=Enum.Font.GothamMedium,TextSize=11,BackgroundColor3=Color3.fromRGB(17,28,42),TextColor3=blue,BorderSizePixel=0}) round(b,5)
+ buttons[name]=b
+ b.Activated:Connect(function() X[key][name]=not X[key][name] or nil end)
+ end
+ local function refresh() for name,b in buttons do b.BackgroundColor3=X[key][name] and Color3.fromRGB(18,86,119) or Color3.fromRGB(17,28,42) b.Text=(X[key][name] and "✓ " or "")..display(name) end end
+ local function refresh() for name,b in buttons do S.styleSelection(b,X[key][name]) b.Text=display(name) end end
+ table.insert(pageRefresh,refresh) refresh()
+end
+local gradeLibrary=require(RS.Shared.Core.Storage.Game.GradesLibrary)
+targetGrid("Grade เป้าหมาย (F–UR)",{"F","E","D","C","B","A","S","SS","X","EX","UR"},"gradeTargets",function(name)return name.."  ×"..gradeLibrary[name].Multiplier end)
+local traitService=require(RS.Shared.Services.TraitService)
+targetGrid("Trait เป้าหมาย (ชื่อจริงในเกม)",traitService.GetSortedTraitNames(),"traitTargets",function(name)return name end)
+note(training,"เลือกได้หลายรายการ • กดซ้ำเพื่อยกเลิก\nหยุดเมื่อได้รายการใดรายการหนึ่งที่เลือกไว้")
+note(training,"การสุ่มต้องอยู่ในระยะสถานี หรือมี Bluetooth ที่ใช้งานอยู่\nสคริปต์ไม่ย้ายตัวละครไปสุ่ม")
+note(training,"เปิด TP ไปสุ่มแล้วกลับ เพื่อสุ่มจากนอกระยะ\nระบบรอผลสุ่มแล้วกลับจุดเดิม")
+toggle(training,"grade","Auto Grade","หยุดเมื่อถึงตัวคูณเป้าหมาย / โทเคนหมด")
+toggle(training,"trait","Auto Trait","หยุดเมื่อได้ Trait ที่เลือก / โทเคนหมด")
+action(training,"ปล่อยตัวที่เลือกกลับเข้า Auto Team",function() X.grade=false X.trait=false X.unit=nil table.clear(S.reservedUnits) end)
+local trainingInfo=label(training,"",90)
+note(tower,"เลือกด่าน → เลือกทีม → เปิด Auto Battle\nทีมอัตโนมัติกับทีมเลือกเองใช้แยกจาก Auto Equip ใน Base")
+local openTower=action(tower,"เปิดหน้าหอคอยของเกม",function()if S.openTowerMenu then S.openTowerMenu() end end) openTower.Name="OpenTowerMenu"
+local towerNames={} for name,def in require(RS.Shared.Core.Storage.Game.InfinityTowerFloorsLibrary) do table.insert(towerNames,{name=name,order=def.LayoutOrder}) end table.sort(towerNames,function(a,b)return a.order<b.order end)
+toggle(tower,"towerLatest","Auto Select Latest Stage • ด่านล่าสุด","เลือกด่านสูงสุดที่ปลดล็อกแล้ว ก่อนเริ่มรอบใหม่")
+local towerChoice
+towerChoice=action(tower,"Tower: Entrance  ›",function() X.towerLatest=false local index=1 for i,v in towerNames do if v.name==X.towerName then index=i break end end X.towerName=towerNames[index%#towerNames+1].name towerChoice.Text="Tower: "..X.towerName.."  ›" end)
+toggle(tower,"towerBest","Auto Equip Best • ทีมหอคอย","เปิด = จัดทีมเก่งสุด • ปิด = ใช้นักเตะที่เลือกเองด้านล่าง")
+S.towerTeamGroup=make("Frame",tower,{Name="ManualTowerTeam",Size=UDim2.new(1,-6,0,0),AutomaticSize=Enum.AutomaticSize.Y,BackgroundTransparency=1})
+make("UIListLayout",S.towerTeamGroup,{Padding=UDim.new(0,8),SortOrder=Enum.SortOrder.LayoutOrder})
+note(tower,"เลือกนักเตะเอง: ปิด Auto Equip Best ก่อน")
+note(S.towerTeamGroup,"เลือกนักเตะเอง: ปิด Auto Equip Best ก่อน")
+local towerSlotButtons={}
+for i=1,require(RS.Shared.Constants).InfinityTowerUnitSlots do
+ local slot=i local b=action(tower,"ช่องทีม "..i.." • เลือกนักเตะ",function()if S.pickTowerSlot then S.pickTowerSlot(slot) end end)
+ local slot=i local b=action(S.towerTeamGroup,"ช่องทีม "..i.." • เลือกนักเตะ",function()if S.pickTowerSlot then S.pickTowerSlot(slot) end end)
+ b.Name="TeamSlot"..i towerSlotButtons[i]=b
+end
+action(tower,"ล้างทีมที่เลือกเอง",function()table.clear(X.towerTeam) table.clear(S.towerProtected)end)
+action(S.towerTeamGroup,"ล้างทีมที่เลือกเอง",function()table.clear(X.towerTeam) table.clear(S.towerProtected)end)
+toggle(tower,"tower","Auto Battle • ต่อสู้อัตโนมัติ","เลือกทีมใหม่เมื่อเริ่มรอบ • ตรวจเงื่อนไข Tower")
+local towerInfo=label(tower,"",110)
+toggle(events,"esp","ESP ตำแหน่งกิจกรรม","Variant Token • Item Rain • จุดโบนัส Obby")
+toggle(events,"mapCollect","เก็บของตามแมพอัตโนมัติ","Grade / Trait Token และ Potion ที่เกิดตามแมพ")
+toggle(events,"events","เก็บของ Event อัตโนมัติ","Item Rain ที่ตกถึงพื้น และ Variant Token")
+toggle(events,"collectWalk","เดินทางไปเก็บของอัตโนมัติ","เลือก TP หรือ Tween ด้านล่าง • กด WASD เพื่อพัก")
+label(events,"วิธีเดินทางไปเก็บของ",30)
+local collectModes=make("Frame",events,{Name="TravelModes",Size=UDim2.new(1,-6,0,40),BackgroundTransparency=1})
+local modeButtons={}
+for i,name in {"TP","Tween"} do
+ local b=make("TextButton",collectModes,{Name=name,Position=UDim2.new((i-1)/2,0,0,0),Size=UDim2.new(0.5,-5,0,36),Text=name,Font=Enum.Font.GothamBold,TextSize=14,TextColor3=blue,BackgroundColor3=Color3.fromRGB(17,28,42),BorderSizePixel=0}) round(b,6)
+ modeButtons[name]=b b.Activated:Connect(function()X.collectMode=name end)
+end
+local tweenSpeedField=field(events,"collectTweenSpeed","ความเร็ว Tween (studs/วินาที)",5,500) tweenSpeedField.Name="TweenSpeed"
+local tpDelayField=field(events,"collectTPDelay","ช่วงห่าง TP (วินาที)",0.2,10) tpDelayField.Name="TPInterval"
+local tweenSpeedField=make("Frame",collectModes,{Name="TweenSpeed",Position=UDim2.fromOffset(0,44),Size=UDim2.new(1,-6,0,82),BackgroundTransparency=1})
+do
+ local title=label(tweenSpeedField,"",30) title.Size=UDim2.new(1,-8,0,30)
+ local track=make("Frame",tweenSpeedField,{Name="SpeedSlider",Position=UDim2.fromOffset(8,44),Size=UDim2.new(1,-24,0,12),BackgroundColor3=Color3.fromRGB(60,62,69),BorderSizePixel=0,Active=true}) round(track,6)
+ local fill=make("Frame",track,{Name="Fill",Size=UDim2.fromScale(0,1),BackgroundColor3=blue,BorderSizePixel=0}) round(fill,6)
+ local knob=make("Frame",track,{Name="Knob",AnchorPoint=Vector2.new(0.5,0.5),Size=UDim2.fromOffset(19,19),BackgroundColor3=Color3.fromRGB(245,247,250),BorderSizePixel=0,ZIndex=3}) round(knob,10)
+ local help=label(tweenSpeedField,"Drag / Scroll • 5–2000 studs/s",22) help.Position=UDim2.fromOffset(8,61) help.TextSize=10
+ local pointer local hovering=false
+ local function render()
+ local speed=math.clamp(tonumber(X.collectTweenSpeed) or 600,5,2000)
+ local fraction=(speed-5)/1995
+ fill.Size=UDim2.fromScale(fraction,1) knob.Position=UDim2.fromScale(fraction,0.5)
+ title.Text="Fast Tween • "..math.round(speed).." studs/s"
+ end
+ local function update(input)
+ X.collectTweenSpeed=math.round(5+math.clamp((input.Position.X-track.AbsolutePosition.X)/track.AbsoluteSize.X,0,1)*1995) render()
+ end
+ table.insert(connections,tweenSpeedField.MouseEnter:Connect(function()hovering=true events.ScrollingEnabled=false end))
+ table.insert(connections,tweenSpeedField.MouseLeave:Connect(function()hovering=false if not pointer then events.ScrollingEnabled=true end end))
+ table.insert(connections,track.InputBegan:Connect(function(input)
+ if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then pointer=input events.ScrollingEnabled=false update(input) end
+ end))
+ table.insert(connections,UIS.InputChanged:Connect(function(input)
+ if hovering and tweenSpeedField.Visible and pages.Events.Visible and input.UserInputType==Enum.UserInputType.MouseWheel then
+ X.collectTweenSpeed=math.clamp(math.round(X.collectTweenSpeed+input.Position.Z*25),5,2000) render()
+ elseif pointer and (input==pointer or (pointer.UserInputType==Enum.UserInputType.MouseButton1 and input.UserInputType==Enum.UserInputType.MouseMovement)) then update(input) end
+ end))
+ table.insert(connections,UIS.InputEnded:Connect(function(input)
+ if pointer and (input==pointer or (pointer.UserInputType==Enum.UserInputType.MouseButton1 and input.UserInputType==Enum.UserInputType.MouseButton1)) then pointer=nil events.ScrollingEnabled=not hovering end
+ end))
+ table.insert(pageRefresh,function()
+ render() if not tweenSpeedField.Visible or not pages.Events.Visible then hovering=false pointer=nil events.ScrollingEnabled=true end
+ end) render()
+end
+local tpDelayField=field(collectModes,"collectTPDelay","ช่วงห่าง TP (วินาที)",0.2,10) tpDelayField.Name="TPInterval" tpDelayField.Position=UDim2.fromOffset(0,44)
+note(events,"TP = ย้ายทันที • ค่าน้อย = ย้ายถี่ขึ้น\nTween = เคลื่อนที่ต่อเนื่อง • ค่ามาก = เร็วขึ้น")
+local function refreshTravelMode()
+ for name,b in modeButtons do b.Text=(X.collectMode==name and "✓ " or "")..name b.BackgroundColor3=X.collectMode==name and Color3.fromRGB(18,86,119) or Color3.fromRGB(17,28,42) end
+ for name,b in modeButtons do b.Text=name=="Tween" and "Fast Tween" or name S.styleSelection(b,X.collectMode==name) end
+ tweenSpeedField.Visible=X.collectMode=="Tween" tpDelayField.Visible=X.collectMode=="TP"
+ collectModes.Size=UDim2.new(1,-6,0,X.collectMode=="Tween" and 132 or 94)
+end
+table.insert(pageRefresh,refreshTravelMode) refreshTravelMode()
+toggle(events,"obby","รับ Obby Bonus เมื่อถึงจุด","รับเฉพาะเมื่อมีสิทธิ์ • แสดงเวลารอ")
+local autoObbyRow=toggle(events,"autoObby","Auto Obby • รับโบนัสอัตโนมัติ","TP รับโบนัสที่พร้อม แล้วกลับบ้านอัตโนมัติ • รอคูลดาวน์")
+table.insert(pageRefresh,function()
+ autoObbyRow.Description.Text=not X.autoObby and "Auto Obby OFF" or not S.enabled and "PAUSED • กดปุ่มเริ่มด้านบนก่อน / Click Resume at the top" or S.obbyStatus or "Waiting for a ready bonus"
+end)
+local eventInfo=label(events,"",170)
+local hint=label(panel,"พร้อมใช้งาน • ระบบเสริมเริ่มต้น OFF",25) hint.Position=UDim2.fromOffset(18,552) hint.Size=UDim2.new(1,-36,0,25) hint.TextSize=11
+local hint=label(panel,"พร้อมใช้งาน • ระบบเสริมเริ่มต้น OFF",25) hint.Position=UDim2.fromOffset(175,582) hint.Size=UDim2.new(1,-187,0,25) hint.TextSize=11
+local minimized=false
+local icon=make("TextButton",gui,{Name="FloatingF",Size=UDim2.fromOffset(48,48),Position=UDim2.new(0,14,0.5,-24),Text="F",Font=Enum.Font.GothamBold,TextSize=28,BackgroundColor3=Color3.fromRGB(24,25,29),TextColor3=Color3.fromRGB(0,207,224),BorderSizePixel=0,ZIndex=100}) round(icon,14)
+local iconStroke=make("UIStroke",icon,{Color=Color3.fromRGB(0,207,224),Thickness=2})
+themeTargets[icon]=nil themeTargets[iconStroke]=nil
+local function setMinimized(value)
+ if minimized==value then return end
+ minimized=value panel.Size=UDim2.fromOffset(680,minimized and 44 or 590) nav.Visible=not minimized button.Visible=not minimized hint.Visible=not minimized
+ for _,p in pages do if minimized then p:SetAttribute("WasVisible",p.Visible) p.Visible=false else p.Visible=p:GetAttribute("WasVisible")==true end end
+ mini.Text=minimized and "+" or "−"
+ minimized=value panel.Visible=not minimized
+ icon.Visible=minimized or X.showIcon
+end
+S.setMinimized=setMinimized
+-- Pointer release decides between a tap and a drag. Activated is deliberately
+-- unused: Roblox can emit it after a drag ends over the same button.
+do
+ local pointer local beganAt local beganPosition local iconStart local dragged=false
+ local function pointerPosition(input) return Vector2.new(input.Position.X,input.Position.Y) end
+ local function moveIcon(input)
+ if not pointer then return end
+ local delta=pointerPosition(input)-beganPosition
+ if delta.Magnitude>=6 then dragged=true end
+ if not dragged then return end
+ local view=workspace.CurrentCamera.ViewportSize
+ local inset=game:GetService("GuiService"):GetGuiInset()
+ local available=Vector2.new(view.X,view.Y-inset.Y)
+ local x=iconStart.X.Scale*available.X+iconStart.X.Offset+delta.X
+ local y=iconStart.Y.Scale*available.Y+iconStart.Y.Offset+delta.Y
+ icon.Position=UDim2.fromOffset(math.clamp(x,0,math.max(0,available.X-48)),math.clamp(y,0,math.max(0,available.Y-48)))
+ end
+ table.insert(connections,icon.InputBegan:Connect(function(input)
+ if pointer or (input.UserInputType~=Enum.UserInputType.MouseButton1 and input.UserInputType~=Enum.UserInputType.Touch) then return end
+ pointer=input beganAt=os.clock() beganPosition=pointerPosition(input) iconStart=icon.Position dragged=false
+ end))
+ table.insert(connections,UIS.InputChanged:Connect(function(input)
+ if pointer and ((pointer.UserInputType==Enum.UserInputType.Touch and input==pointer) or (pointer.UserInputType==Enum.UserInputType.MouseButton1 and input.UserInputType==Enum.UserInputType.MouseMovement)) then moveIcon(input) end
+ end))
+ table.insert(connections,UIS.InputEnded:Connect(function(input)
+ if not pointer or (input~=pointer and not (pointer.UserInputType==Enum.UserInputType.MouseButton1 and input.UserInputType==Enum.UserInputType.MouseButton1)) then return end
+ moveIcon(input)
+ local tapped=not dragged and os.clock()-beganAt<=0.6
+ pointer=nil
+ if tapped then setMinimized(not minimized) end
+ end))
+end
+table.insert(pageRefresh,function()icon.Visible=minimized or X.showIcon end)
+mini.Activated:Connect(function()setMinimized(not minimized)end)
+local function resize() local view=workspace.CurrentCamera.ViewportSize scale.Scale=math.min(1,(view.X-32)/680,(view.Y-64)/590) end resize()
+local function resize() local view=workspace.CurrentCamera.ViewportSize scale.Scale=math.min(1,(view.X-32)/900,(view.Y-64)/620) end resize()
+if loadedUI then
+ local view=workspace.CurrentCamera.ViewportSize
+ if validNumber(loadedUI.x) and validNumber(loadedUI.y) then panel.Position=UDim2.fromOffset(math.clamp(loadedUI.x,0,math.max(0,view.X-panel.AbsoluteSize.X)),math.clamp(loadedUI.y,0,math.max(0,view.Y-panel.AbsoluteSize.Y))) end
+ if loadedUI.minimized==true then setMinimized(true) end
+end
+table.insert(connections,workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(resize))
+local dragging=false local dragStart local startPosition local dragTouch
+table.insert(connections,header.InputBegan:Connect(function(input) if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then dragging=true dragStart=input.Position startPosition=panel.Position dragTouch=input end end))
+table.insert(connections,UIS.InputEnded:Connect(function(input) if input==dragTouch or input.UserInputType==Enum.UserInputType.MouseButton1 then dragging=false end end))
+table.insert(connections,UIS.InputChanged:Connect(function(input) if dragging and (input.UserInputType==Enum.UserInputType.MouseMovement or input==dragTouch) then local delta=input.Position-dragStart local view=workspace.CurrentCamera.ViewportSize panel.Position=UDim2.fromOffset(math.clamp(startPosition.X.Offset+delta.X,0,math.max(0,view.X-panel.AbsoluteSize.X)),math.clamp(startPosition.Y.Offset+delta.Y,0,math.max(0,view.Y-panel.AbsoluteSize.Y))) end end))
+table.insert(connections,UIS.InputBegan:Connect(function(input,processed) if not processed and input.KeyCode==Enum.KeyCode.RightShift then panel.Visible=not panel.Visible end end))
+gui.Destroying:Connect(function() S.running=false for _,c in connections do c:Disconnect() end end)
+table.insert(connections,UIS.InputBegan:Connect(function(input,processed)
+ if UIS:GetFocusedTextBox() or input.UserInputType~=Enum.UserInputType.Keyboard then return end
+ if bindingKey then
+ if input.KeyCode~=Enum.KeyCode.Unknown and input.KeyCode~=Enum.KeyCode.Escape then X.uiKey=input.KeyCode.Name end
+ bindingKey=false return
+ end
+ if not processed and input.KeyCode.Name==X.uiKey then setMinimized(not minimized) end
+end))
+gui.Destroying:Connect(function()
+ S.running=false
+ if S.stopCollectionTravel then pcall(S.stopCollectionTravel) end
+ if S.saveConfig then pcall(S.saveConfig) end
+ for _,c in connections do c:Disconnect() end
+end)
+-- One idle listener per UI instance; released with the existing cleanup list.
+do
+ local virtualUser=game:GetService("VirtualUser")
+ local nextAntiIdle=0
+ S.antiAFK={activations=0,lastError=""}
+ local function preventIdle()
+ if not S.running or not gui.Parent or not X.antiAFK or os.clock()<nextAntiIdle then return end
+ nextAntiIdle=os.clock()+30
+ local ok,err=pcall(function()
+ virtualUser:CaptureController()
+ virtualUser:ClickButton2(Vector2.new(0,0))
+ end)
+ if ok then S.antiAFK.activations+=1 S.antiAFK.lastError=""
+ else S.antiAFK.lastError=tostring(err) end
+ end
+ table.insert(connections,P.Idled:Connect(preventIdle))
+ S.checkAntiAFK=preventIdle
+end
+
+-- Debounced auto-save with stable fingerprints and a last-good backup.
+do
+local lastFingerprint local lastGoodRaw
+local function copySettings()
+ local options={}
+ for key,kind in optionKinds do
+ local value=X[key]
+ if kind=="table" and type(value)=="table" then
+ local map={}
+ if key=="towerTeam" then for slot=1,require(RS.Shared.Constants).InfinityTowerUnitSlots do if type(value[slot])=="string" then map[tostring(slot)]=value[slot] end end
+ else for k,v in value do if type(k)=="string" and type(v)=="boolean" then map[k]=v end end end
+ options[key]=map
+ elseif kind=="boolean" and type(value)=="boolean" or kind=="string" and type(value)=="string" or kind=="number" and validNumber(value) then options[key]=value end
+ end
+ local conveyor={}
+ for _,key in {"autoBuy","spawnBestLocker","warnings","variantFilter","autoSellLockers"} do conveyor[key]=config[key] end
+ conveyor.variants=table.clone(config.variants) conveyor.boxes=table.clone(config.boxes)
+ return {schema=1,placeId=game.PlaceId,userId=P.UserId,enabled=S.enabled,language=G.BlueFarmLanguage or "th",options=options,conveyor=conveyor,ui={x=panel.Position.X.Offset,y=panel.Position.Y.Offset,minimized=minimized}}
+end
+local function canonical(value)
+ if type(value)~="table" then return http:JSONEncode(value) end
+ local keys={} for key in value do table.insert(keys,key) end table.sort(keys,function(a,b)return tostring(a)<tostring(b)end)
+ local rows={} for _,key in keys do table.insert(rows,http:JSONEncode(tostring(key))..":"..canonical(value[key])) end
+ return "{"..table.concat(rows,",").."}"
+end
+S.saveConfig=function()
+ if G.BlueFarm~=S then return false end
+ local ok,result=pcall(function()
+ local snapshot=copySettings()
+ local fingerprint=canonical(snapshot)
+ if fingerprint==lastFingerprint then return true end
+ G.BlueFarmConfigSessions[configPath]=snapshot
+ if type(writefile)~="function" then
+ lastFingerprint=fingerprint configState.status="Config: session only" return true
+ end
+ local raw=http:JSONEncode(snapshot)
+ -- Retain the previous valid content before updating the primary file.
+ if not lastGoodRaw and type(readfile)=="function" then
+ local readOK,previous=pcall(readfile,configPath)
+ if readOK and type(previous)=="string" and #previous<250000 then
+ local parseOK,parsed=pcall(function()return http:JSONDecode(previous)end)
+ if parseOK and validEnvelope(parsed) then lastGoodRaw=previous end
+ end
+ end
+ if lastGoodRaw then pcall(writefile,configPath..".bak",lastGoodRaw) end
+ writefile(configPath,raw)
+ lastGoodRaw=raw lastFingerprint=fingerprint configState.saves+=1 configState.lastError="" configState.status="Config: saved"
+ return true
+ end)
+ if not ok then configState.lastError=tostring(result) configState.status="Config: save failed" return false end
+ return result
+end
+table.insert(connections,gui.Destroying:Connect(function()S.saveConfig()end))
+S.saveConfig()
+task.spawn(function()
+ while S.running and gui.Parent do task.wait(0.75) if S.running and gui.Parent then S.saveConfig() end end
+end)
+end
+
+
+local function safe(f)
+ local ok,err=pcall(f) if not ok then S.inventoryBusy=false S.errors+=1 S.lastError=tostring(err) end
+ local ok,err=pcall(f) if not ok then S.errors+=1 S.lastError=tostring(err) end
+end
+-- Compare every striker at level 1, keeping variant, grade and trait bonuses.
+local function unitBase(unit)
+ return U.GetPlayerUnitCashPerDrop(P,{PlayerUnitName=unit.PlayerUnitName,PlayerUnitVariant=unit.Variant,PlayerUnitLevel=1,PlayerUnitGrade=unit.Grade,PlayerUnitTrait=unit.Trait,PlayerUnitBallSkin=unit.BallSkin})
+end
+local function partBase(part)
+ local a=part:GetAttributes()
+ return U.GetPlayerUnitCashPerDrop(P,{PlayerUnitName=a.PlayerUnitName,PlayerUnitVariant=a.PlayerUnitVariant,PlayerUnitLevel=1,PlayerUnitGrade=a.PlayerUnitGrade,PlayerUnitTrait=a.PlayerUnitTrait,PlayerUnitBallSkin=a.PlayerUnitBallSkin})
+end
+local objectCache={}
+local failedPlacement={}
+local function canPlace(id) return not S.reservedUnits[id] and G.BlueFarmSpareSale.pending~=id and os.clock()>=(failedPlacement[id] or 0) end
+local timers={}
+local function due(key,interval)
+ local now=os.clock()
+ if now<(timers[key] or 0) then return false end
+ timers[key]=now+interval
+ return true
+end
+local function objects(keys,plot)
+ local key=table.concat(keys,",")
+ local cached=objectCache[key]
+ if cached and cached.plot==plot and os.clock()-cached.at<2 then return cached.items end
+ local isDropper=keys[2]=="_activeHandlerType"
+ local searchKeys=isDropper and {"Part","IsClientOwnedPlot"} or keys
+ local seen={}
+ local out={} for _,v in filtergc("table",{Keys=searchKeys},false) do
+ if typeof(v.Part)=="Instance" and v.Part:IsDescendantOf(plot) and (not isDropper or type(v._computeAction)=="function") and not seen[v.Part] then
+ seen[v.Part]=true table.insert(out,v)
+ end end
+ objectCache[key]={plot=plot,at=os.clock(),items=out}
+ return out
+end
+-- Conveyor requests do not depend on the proximity UI's active client object.
+task.spawn(function()
+ local pending local completedKey local attemptKey local attempts=0
+ local nextPurchaseAt=0 local nextRollAt=0 local observedPart local observedRoll
+ local ownsLock=false
+ local function release()
+ if ownsLock then S.inventoryBusy=false ownsLock=false end
+ end
+ local function amount(name,var)
+ local boxes=D.GetData().Inventory.Boxes local entry=boxes[name] and boxes[name][var]
+ return entry and entry.Amount or 0
+ end
+ local function check()
+ if pending then
+ if amount(pending.name,pending.variant)>pending.before then
+ S.bought+=1 completedKey=pending.key
+ S.lastLockerBought={name=pending.name,variant=pending.variant}
+ S.buyStatus="Bought "..pending.variant.." "..pending.name
+ pending=nil release()
+ elseif os.clock()<pending.deadline then return
+ else
+ S.buyStatus="Purchase unconfirmed; retrying after cooldown"
+ pending=nil release() nextPurchaseAt=os.clock()+1.5
+ end
+ end
+ if not S.running or not S.enabled then return end
+ if S.inventoryBusy then S.buyStatus="Waiting for inventory operations" return end
+ if not config.autoBuy then S.buyStatus="Auto Buy is OFF" return end
+ local home=workspace.Map.PlotModels:FindFirstChild(P.Name)
+ local systems=home and home:FindFirstChild("Systems") local station=systems and systems:FindFirstChild("RollStation")
+ local part=station and station:FindFirstChild("ConveyorPart")
+ if not part then S.buyStatus="Waiting for your conveyor" return end
+ local id=part:GetAttribute("RollId")
+ if part~=observedPart or id~=observedRoll then
+ observedPart=part observedRoll=id nextRollAt=os.clock()+math.max(0.2,B.GetConveyorRollCooldown(P))
+ end
+ local name=part:GetAttribute("BoxName") local var=part:GetAttribute("Variant") or "Normal"
+ local key=tostring(id)..":"..tostring(name)..":"..var
+ local selected=name and BL[name] and config.boxes[name]~=false and (not config.variantFilter or config.variants[var]~=false)
+ if attemptKey~=key then attemptKey=key attempts=0 nextPurchaseAt=0 end
+ if not B.HasBoxInventorySpace(P,1) then S.buyStatus="Waiting: locker inventory is full" return end
+ if selected and completedKey~=key then
+ local price=B.GetConveyorBoxPrice(name,var)
+ if price<=(D.GetData().Currency.Cash or 0) then
+ if S.baseBusy then S.buyStatus="Waiting for base operations" return end
+ if attempts<3 then
+ if os.clock()<nextPurchaseAt then return end
+ attempts+=1 S.inventoryBusy=true ownsLock=true
+ pending={name=name,variant=var,key=key,before=amount(name,var),deadline=os.clock()+2.5}
+ S.buyStatus="Buying "..var.." "..name
+ R.PurchaseConveyorRoll:FireServer(name,var,price)
+ return
+ end
+ else S.buyStatus="Waiting: cash for "..name end
+ end
+ if P:GetAttribute("TutorialConveyorLock") then S.buyStatus="Finish the conveyor tutorial first" return end
+ local untilTime=part:GetAttribute("RollCooldownUntil") or 0
+ if workspace:GetServerTimeNow()<untilTime or os.clock()<nextRollAt then return end
+ local warning=require(RS.Client.Core.Gui.WarningNewBoxGuiClient)
+ if warning.IsOpen() then warning.Close() end
+ nextRollAt=os.clock()+math.max(1,B.GetConveyorRollCooldown(P))
+ R.NewRequestConveyorRoll:FireServer()
+ S.conveyorRollRequests=(S.conveyorRollRequests or 0)+1
+ if not name then S.buyStatus="Spawning conveyor locker" end
+ end
+ S.checkConveyor=check
+ while S.running and gui.Parent do
+ local ok,err=pcall(check)
+ if not ok then pending=nil release() S.errors+=1 S.lastError="Conveyor: "..tostring(err) nextPurchaseAt=os.clock()+3 end
+ task.wait(0.1)
+ end
+ release()
+end)
+
+
+-- Discover every cash upgrade, including entries hidden from the general menu.
+task.spawn(function()
+ local retryAt={}
+ local preferred={"PlayerUnitExpansion","Luck","ConveyorLuck","OpenTimeBoost","CrateCashBoost","WalkSpeed","CratePolisherUnlock","CratePolisher"}
+ local names={} local seen={}
+ for _,name in preferred do if UL[name] then table.insert(names,name) seen[name]=true end end
+ for name,def in UL do if not seen[name] and type(def)=="table" and type(def.GetPrice)=="function" then table.insert(names,name) end end
+ S.upgradeTypes=#names
+ local cursor=0
+ while S.running and gui.Parent do
+ if S.enabled and X.upgrades then safe(function()
+ for offset=1,#names do
+ local index=(cursor+offset-1)%#names+1
+ local name=names[index] local def=UL[name]
+ local count=US.GetTimesPurchased(P,name)
+ local eligible=not def.MaxPurchases or count<def.MaxPurchases
+ if name=="CratePolisher" and US.GetTimesPurchased(P,"CratePolisherUnlock")<1 then eligible=false end
+ if eligible and def.CanPurchase then
+ local ok,allowed=pcall(def.CanPurchase,{Player=P})
+ eligible=ok and allowed==true
+ end
+ if eligible and os.clock()>=(retryAt[name] or 0) then
+ local price=def.GetPrice(count)
+ if type(price)=="number" and price>=0 and price<math.huge and price<=(D.GetData().Currency.Cash or 0) then
+ cursor=index
+ R.PurchaseUpgrade:FireServer(name)
+ local deadline=os.clock()+0.8
+ repeat task.wait() until not S.running or US.GetTimesPurchased(P,name)>count or os.clock()>=deadline
+ local after=US.GetTimesPurchased(P,name)
+ if after>count then
+ S.gameUpgrades+=after-count
+ if name=="Luck" or name=="ConveyorLuck" then S.luckUpgrades+=after-count end
+ S.lastUpgrade={name=name,level=after,price=price}
+ objectCache={}
+ else retryAt[name]=os.clock()+3 end
+ break
+ end end
+ end
+ end) end
+ task.wait(0.15)
+ end
+end)
+-- React to newly collected crates without waiting for a polling tick.
+task.spawn(function()
+ local pickupAt=0
+ local sales={}
+ local busy=false
+ local collectPart
+ local collectConnection
+ local function collect()
+ if busy or not S.running or not S.enabled or not gui.Parent then return end
+ busy=true
+ safe(function()
+ local plot=workspace.Map.PlotModels:FindFirstChild(P.Name)
+ if not plot then return end
+ local part=plot.Systems.TycoonConveyor.CollectPart
+ if collectPart~=part then
+ if collectConnection then collectConnection:Disconnect() end
+ collectPart=part
+ collectConnection=part:GetAttributeChangedSignal("PendingBallCount"):Connect(function() task.defer(collect) end)
+ table.insert(connections,collectConnection)
+ end
+ local now=os.clock()
+ if (part:GetAttribute("PendingBallCount") or 0)>0 and now-pickupAt>=0.4 then
+ pickupAt=now R.PickupCrateBox:FireServer(part)
+ end
+ local crates=D.GetData().Crates
+ for id in crates do
+ if (not S.shouldPolish or not S.shouldPolish(id)) and now-(sales[id] or -10)>=1 then sales[id]=now R.SellCrate:FireServer(id) end
+ end
+ for id in sales do if not crates[id] then sales[id]=nil S.sold+=1 end end
+ end)
+ busy=false
+ end
+ table.insert(connections,D.Signals.CrateDataChanged:Connect(function() task.defer(collect) end))
+ while S.running and gui.Parent do collect() task.wait(0.05) end
+end)
+task.spawn(function()
+ while S.running and gui.Parent do
+ if S.enabled and not S.inventoryBusy and not S.selectingTraining then
+ S.baseBusy=true
+ safe(function()
+ local plot=workspace.Map.PlotModels:FindFirstChild(P.Name) if not plot then return end
+ local d=D.GetData()
+
+ local drops=objects({"Part","_activeHandlerType","IsClientOwnedPlot"},plot)
+ -- The dedicated fast-open worker owns locker opening and its in-flight guard.
+ local opening,unlocked=0,0
+ for _,v in drops do
+ if v.Part:GetAttribute("Unlocked") then unlocked+=1 end
+ if v.Part:GetAttribute("Type")=="Box" then opening+=1 end
+ end
+ S.waitingBoxes=opening
+ -- Keep the ten highest-potential lockers, counting individual boxes, not stacks.
+ if config.autoSellLockers and os.clock()>=(S.merchantNext or 0) and due("sellLockers",0.65) then
+ local sale=G.BlueFarmLockerSale
+ local function count(name,var)
+ local boxes=D.GetData().Inventory.Boxes
+ return boxes[name] and boxes[name][var] and boxes[name][var].Amount or 0
+ end
+ if sale.pending then
+ local pending=sale.pending
+ if count(pending.name,pending.variant)<pending.before then
+ sale.sold+=pending.before-count(pending.name,pending.variant)
+ sale.pending=nil
+ elseif os.clock()>=(pending.retryAfter or math.huge) and count(pending.name,pending.variant)==pending.before then
+ sale.pending=nil
+ else sale.status="Checking locker sale result" end
+ end
+ if not sale.pending then
+ local rows={} local total=0
+ for name,variants in D.GetData().Inventory.Boxes do
+ for var,entry in variants do
+ if entry.Amount and entry.Amount>0 and BL[name] then
+ local value=0
+ for unitName in BL[name].PlayerUnits do
+ value=math.max(value,U.GetPlayerUnitCashPerDrop(P,{PlayerUnitName=unitName,PlayerUnitVariant=var,PlayerUnitLevel=1}))
+ end
+ table.insert(rows,{name=name,variant=var,amount=entry.Amount,score=value})
+ total+=entry.Amount
+ end end end
+ table.sort(rows,function(a,b)
+ if a.score~=b.score then return a.score>b.score end
+ if a.name~=b.name then return a.name<b.name end
+ return a.variant<b.variant end)
+ local remaining=config.keepLockers local target
+ for _,entry in rows do
+ local keep=math.min(remaining,entry.amount)
+ remaining-=keep entry.extra=entry.amount-keep
+ end
+ for i=#rows,1,-1 do
+ local entry=rows[i]
+ if entry.extra>0 and not B.IsBoxFavorited(P,entry.name,entry.variant) then target=entry break end
+ end
+ sale.inventory=total
+ if total>config.keepLockers and target then
+ local character=P.Character local backpack=P:FindFirstChildOfClass("Backpack")
+ local humanoid=character and character:FindFirstChildOfClass("Humanoid")
+ local tool
+ for _,container in {backpack,character} do
+ if container then for _,item in container:GetChildren() do
+ if item:IsA("Tool") and item:GetAttribute("InventoryType")=="Box" and item.Name==target.name and (item:GetAttribute("Variant") or "Normal")==target.variant then tool=item break end
+ end end if tool then break end end
+ if tool and humanoid then
+ S.inventoryBusy=true
+ local previous=character:FindFirstChildOfClass("Tool")
+ humanoid:EquipTool(tool)
+ local deadline=os.clock()+0.5
+ repeat task.wait() until not S.running or tool.Parent==character or os.clock()>=deadline
+ -- Wait for the equipped-tool update to reach the server before selling.
+ task.wait(0.18)
+ if S.running and S.enabled and tool.Parent==character and not B.IsBoxFavorited(P,target.name,target.variant) then
+ if S.running and S.enabled and config.autoSellLockers and tool.Parent==character and character:FindFirstChildOfClass("Tool")==tool and not B.IsBoxFavorited(P,target.name,target.variant) then
+ local before=count(target.name,target.variant)
+ if before>0 then
+ sale.pending={name=target.name,variant=target.variant,before=before,retryAfter=os.clock()+3}
+ S.merchantNext=os.clock()+1.5
+ R.MerchantSell:FireServer("HeldItem")
+ deadline=os.clock()+1
+ repeat task.wait() until count(target.name,target.variant)<before or os.clock()>=deadline
+ local after=count(target.name,target.variant)
+ if after<before then sale.sold+=before-after sale.pending=nil sale.status="Sold lowest locker; keeping best 10" end
+ end end
+ if previous and previous.Parent and humanoid.Parent then humanoid:EquipTool(previous) end
+ S.inventoryBusy=false
+ end
+ else sale.status=total<=config.keepLockers and "Keeping best 10 lockers" or "Extra lockers are favorited" end
+ end
+ end
+ -- Keep the ten best unequipped strikers; never include base occupants in the quota.
+ if X.sellSpareStrikers and os.clock()>=(S.merchantNext or 0) and due("sellSpareCheck",0.7) then
+ local sale=G.BlueFarmSpareSale
+ sale.attempts=sale.attempts or {}
+ if sale.pending then
+ if not D.GetData().PlayerUnits[sale.pending] then
+ sale.sold+=1 sale.pending=nil sale.status="Sale confirmed"
+ elseif os.clock()>=(sale.retryAt or 0) and (sale.attempts[sale.pending] or 0)<3 then
+ -- Retry only an id still present after the confirmation window, never a sold id.
+ sale.sent[sale.pending]=nil sale.pending=nil
+ elseif os.clock()>=(sale.retryAt or 0) and (sale.attempts[sale.pending] or 0)>=3 then
+ sale.failedId=sale.pending sale.pending=nil sale.status="Sale not confirmed after 3 attempts; skipped"
+ else sale.status="Waiting for sale confirmation" end
+ end
+ local function rankSpares()
+ local ranked={}
+ for id,unit in D.GetData().PlayerUnits do
+ if not unit.Equipped then table.insert(ranked,{id=id,unit=unit,base=unitBase(unit)}) end
+ end
+ table.sort(ranked,function(a,b)
+ if a.base~=b.base then return a.base>b.base end
+ if (a.unit.Level or 1)~=(b.unit.Level or 1) then return (a.unit.Level or 1)>(b.unit.Level or 1) end
+ return a.id<b.id
+ end)
+ return ranked
+ end
+ local ranked=rankSpares()
+ sale.spares=#ranked
+ local candidate local protected=0
+ for i=#ranked,11,-1 do
+ local entry=ranked[i]
+ if S.reservedUnits[entry.id] or S.towerProtected[entry.id] or U.IsPlayerUnitFavorited(P,entry.id) then protected+=1
+ elseif not sale.sent[entry.id] and not candidate then candidate=entry end
+ end
+ sale.protected=protected
+ if not sale.pending and candidate then
+ local character=P.Character local backpack=P:FindFirstChildOfClass("Backpack")
+ local humanoid=character and character:FindFirstChildOfClass("Humanoid")
+ local tool
+ for _,container in {backpack,character} do
+ if container then for _,item in container:GetChildren() do
+ if item:IsA("Tool") and item:GetAttribute("InventoryType")=="PlayerUnit" and item:GetAttribute("InventoryKey")==candidate.id then tool=item break end
+ end end if tool then break end end
+ if humanoid and tool then
+ S.inventoryBusy=true
+ local previous=character:FindFirstChildOfClass("Tool")
+ local ok,err=pcall(function()
+ humanoid:EquipTool(tool)
+ local deadline=os.clock()+0.6
+ repeat task.wait() until not S.running or tool.Parent==character or os.clock()>=deadline
+ task.wait(0.18)
+ local stillSurplus=false
+ for i,entry in rankSpares() do if i>10 and entry.id==candidate.id then stillSurplus=true break end end
+ local current=D.GetData().PlayerUnits[candidate.id]
+ if S.running and S.enabled and X.sellSpareStrikers and stillSurplus and tool.Parent==character and character:FindFirstChildOfClass("Tool")==tool and current and not current.Equipped and not S.reservedUnits[candidate.id] and not S.towerProtected[candidate.id] and not U.IsPlayerUnitFavorited(P,candidate.id) and not sale.sent[candidate.id] then
+ -- Revalidate the exact held id on every attempt; sold ids stay guarded.
+ sale.sent[candidate.id]=true sale.pending=candidate.id sale.status="Selling surplus striker"
+ sale.attempts[candidate.id]=(sale.attempts[candidate.id] or 0)+1 sale.retryAt=os.clock()+5
+ S.merchantNext=os.clock()+1.5
+ R.MerchantSell:FireServer("HeldItem")
+ deadline=os.clock()+1.2
+ repeat task.wait() until not S.running or not D.GetData().PlayerUnits[candidate.id] or os.clock()>=deadline
+ if not D.GetData().PlayerUnits[candidate.id] then sale.sold+=1 sale.pending=nil sale.status="Sold surplus; keeping best 10 spares" end
+ end
+ end)
+ if previous and previous.Parent and humanoid.Parent then humanoid:EquipTool(previous) end
+ S.inventoryBusy=false
+ if not ok then error(err) end
+ else sale.status="Waiting for striker tool" end
+ elseif not sale.pending then
+ sale.status=#ranked<=10 and "Keeping best 10 spares (base excluded)" or "Extra strikers protected by Favorite / Training"
+ end
+ S.featureStatus.SpareStrikers=sale.status.." | sold "..sale.sold.." | spares "..sale.spares
+ end
+
+ -- Fill every unlocked empty slot in one pass; include every floor.
+ if X.autoEquip then
+ local available={}
+ for id,unit in D.GetData().PlayerUnits do
+ if not unit.Equipped and canPlace(id) then table.insert(available,{id=id,base=unitBase(unit),level=unit.Level or 1}) end
+ end
+ table.sort(available,function(a,b) if a.base==b.base then return a.level>b.level end return a.base>b.base end)
+ local nextUnit=1
+ for _,v in drops do
+ local part=v.Part
+ if part:GetAttribute("Unlocked") and not part:GetAttribute("Type") and due("fill:"..part:GetFullName(),1) then
+ local entry=available[nextUnit]
+ if entry then
+ R.PlacePlayerUnitOnDropper:FireServer(part,entry.id)
+ local deadline=os.clock()+0.65
+ repeat task.wait() until not S.running or part:GetAttribute("Type") or os.clock()>=deadline
+ if not part:GetAttribute("Type") then failedPlacement[entry.id]=os.clock()+10 end
+ nextUnit+=1
+ end
+ end
+ end
+ end
+ -- Replace only a weaker base striker; leave counting-down lockers untouched.
+ if X.autoEquip and due("bestBase",0.3) then
+ local candidate,candidateBase,candidateLevel
+ for id,unit in D.GetData().PlayerUnits do
+ if not unit.Equipped and canPlace(id) then
+ local value=unitBase(unit)
+ if not candidateBase or value>candidateBase or (value==candidateBase and (unit.Level or 1)>candidateLevel) then
+ candidate=id candidateBase=value candidateLevel=unit.Level or 1
+ end end end
+ if candidate then
+ local target,targetBase,targetLevel
+ for _,v in drops do
+ if v.Part:GetAttribute("Unlocked") then
+ local kind=v.Part:GetAttribute("Type")
+ if not kind then continue end
+ if kind=="PlayerUnit" then
+ local value=partBase(v.Part)
+ local level=v.Part:GetAttribute("PlayerUnitLevel") or 1
+ if not targetBase or value<targetBase or (value==targetBase and level<targetLevel) then target=v.Part targetBase=value targetLevel=level end
+ end end end
+ if target and (candidateBase>targetBase or (candidateBase==targetBase and candidateLevel>targetLevel)) then
+ if target:GetAttribute("Type")=="PlayerUnit" then
+ R.RemovePlayerUnitFromDropper:FireServer(target)
+ local deadline=os.clock()+1
+ repeat task.wait() until not S.running or not target:GetAttribute("Type") or os.clock()>=deadline
+ end
+ if S.running and S.enabled and not target:GetAttribute("Type") then
+ R.PlacePlayerUnitOnDropper:FireServer(target,candidate)
+ local deadline=os.clock()+1
+ repeat task.wait(0.05) until not S.running or not D.GetData().PlayerUnits[candidate] or D.GetData().PlayerUnits[candidate].Equipped or os.clock()>=deadline
+ if D.GetData().PlayerUnits[candidate] and D.GetData().PlayerUnits[candidate].Equipped then
+ S.baseSwaps+=1 S.lastBaseSwap={name=D.GetData().PlayerUnits[candidate].PlayerUnitName,oldBase=targetBase,newBase=candidateBase}
+ else failedPlacement[candidate]=os.clock()+10
+ end
+ end end end
+ end
+ local free
+ for _,v in drops do if v.Part:GetAttribute("Unlocked") and not v.Part:GetAttribute("Type") then free=v.Part break end end
+ local chosen,variant,bestIndex
+ local queued=0
+ for name,variants in D.GetData().Inventory.Boxes do
+ for var,entry in variants do
+ if entry.Amount and entry.Amount>0 and BL[name] then
+ queued+=entry.Amount
+ local value=0
+ for unitName in BL[name].PlayerUnits do
+ value=math.max(value,U.GetPlayerUnitCashPerDrop(P,{PlayerUnitName=unitName,PlayerUnitVariant=var,PlayerUnitLevel=1}))
+ end
+ local better=not bestIndex or value>bestIndex
+ if bestIndex and value==bestIndex then
+ local tier=BL[name].Index or 0 local chosenTier=BL[chosen].Index or 0
+ better=tier>chosenTier or (tier==chosenTier and (name<chosen or (name==chosen and var<variant)))
+ end
+ if better then chosen=name variant=var bestIndex=value end
+ end
+ end end
+ S.queuedBoxes=queued
+ S.nextBestLocker=chosen and {name=chosen,variant=variant,basePotential=bestIndex} or nil
+ -- Placement must not wait for surplus sales to finish.
+ S.lockerPlaceStatus=not config.spawnBestLocker and "Best Locker OFF" or not chosen and "No lockers available" or opening>=math.min(config.openLockers,unlocked) and "Waiting for opening slots" or "Placing best locker"
+ if config.spawnBestLocker and chosen and opening<math.min(config.openLockers,unlocked) then
+ if not free then
+ local weakest,score
+ for _,v in drops do if v.Part:GetAttribute("Unlocked") and v.Part:GetAttribute("Type")=="PlayerUnit" then
+ local a=v.Part:GetAttributes()
+ local value=partBase(v.Part)
+ if not score or value<score then weakest=v.Part score=value end
+ end end
+ if weakest then
+ R.RemovePlayerUnitFromDropper:FireServer(weakest)
+ local deadline=os.clock()+1
+ repeat task.wait(0.05) until not S.running or not weakest:GetAttribute("Type") or os.clock()>=deadline
+ if not weakest:GetAttribute("Type") then free=weakest end
+ end
+ end
+ local currentVariants=D.GetData().Inventory.Boxes[chosen]
+ local currentBox=currentVariants and currentVariants[variant]
+ if free and free.Parent and free:GetAttribute("Unlocked") and not free:GetAttribute("Type") and currentBox and (currentBox.Amount or 0)>0 and S.running and S.enabled and config.spawnBestLocker and due("place:"..free:GetFullName(),1.2) then
+ R.PlaceBoxOnDropper:FireServer(free,chosen,variant)
+ local deadline=os.clock()+1
+ repeat task.wait(0.05) until not S.running or free:GetAttribute("Type")=="Box" or os.clock()>=deadline
+ if free:GetAttribute("Type")=="Box" then S.placed+=1 S.lastPlacedLocker={name=chosen,variant=variant,basePotential=bestIndex} S.lockerPlaceStatus="Placed "..variant.." "..chosen else S.lockerPlaceStatus="Placement unconfirmed; retrying" end
+ end
+ end
+ -- Give every equipped striker a turn; use the current full cash balance.
+ if due("striker",0.25) then
+ if X.strikerUpgrade and due("striker",0.25) then
+ local maxLevel=require(RS.Shared.Constants).MaxPlayerUnitLevel
+ for _,v in drops do
+ if not S.running or not S.enabled or S.selectingTraining then break end
+ if not S.running or not S.enabled or not X.strikerUpgrade or S.selectingTraining then break end
+ local part=v.Part
+ if part.Parent and part:GetAttribute("Type")=="PlayerUnit" then
+ local h=v._activeHandler local level=part:GetAttribute("PlayerUnitLevel") or 1
+ if h and h._getLevelUpgradeCost and level<maxLevel then
+ local cost=h:_getLevelUpgradeCost(level+1)
+ local retryKey="unitUpgrade:"..part:GetFullName()
+ if type(cost)=="number" and cost>=0 and cost<math.huge and cost<=(D.GetData().Currency.Cash or 0) and due(retryKey,0.25) then
+ R.RequestPlayerUnitLevelUp:FireServer(part)
+ local deadline=os.clock()+0.75
+ repeat task.wait() until not S.running or not S.enabled or not part.Parent or part:GetAttribute("Type")~="PlayerUnit" or (part:GetAttribute("PlayerUnitLevel") or 0)>level or os.clock()>=deadline
+ if part.Parent and part:GetAttribute("Type")=="PlayerUnit" and (part:GetAttribute("PlayerUnitLevel") or 0)>level then
+ S.strikerUpgrades+=1
+ S.lastStrikerUpgrade={name=part:GetAttribute("PlayerUnitName"),level=part:GetAttribute("PlayerUnitLevel"),cost=cost}
+ else timers[retryKey]=os.clock()+3 end
+ end end end end
+ end
+ S.cycles+=1
+ end)
+ S.inventoryBusy=false
+ S.baseBusy=false
+ end
+ if due("ui",0.2) then
+ if S.lockerSale and S.lockerSale.status then hint.Text=S.lockerSale.status elseif config.warnings and S.warning then hint.Text=S.warning elseif S.buyStatus then hint.Text=S.buyStatus elseif S.sellOnce and S.sellOnce.sent then hint.Text=S.sellOnce.status elseif S.lastUpgrade then hint.Text="UPGRADED  "..S.lastUpgrade.name.."  Lv."..S.lastUpgrade.level end
+ local plot=workspace.Map.PlotModels:FindFirstChild(P.Name)
+ local total,units,boxes,empty=0,0,0,0
+ if plot then
+ for _,part in game.CollectionService:GetTagged("DropperBasePart") do
+ if part:IsDescendantOf(plot) and part:GetAttribute("Unlocked") then
+ total+=1
+ local kind=part:GetAttribute("Type")
+ if kind=="PlayerUnit" then units+=1 elseif kind=="Box" then boxes+=1 else empty+=1 end
+ end end end
+ S.baseSlots={total=total,strikers=units,lockers=boxes,empty=empty}
+ stats.Text=string.format("BASE      %d / %d occupied   |   %d free\nTEAM      %d strikers   |   %d lockers\nQUEUE    %d waiting   /   %d opened\nGROW     %d upgrades   /   %d swaps\nLUCK      %d purchases   |   errors %d",total-empty,total,empty,units,boxes,S.queuedBoxes or 0,S.opened,S.strikerUpgrades,S.baseSwaps,S.luckUpgrades,S.errors)
+ button.Text=S.enabled and "RUNNING   •   CLICK TO PAUSE" or "PAUSED   •   CLICK TO RESUME"
+ button.BackgroundColor3=S.enabled and Color3.fromRGB(15,72,110) or Color3.fromRGB(40,47,59)
+ end
+ task.wait(0.05)
+ end
+end)
+
+-- Additional systems share the main lifecycle, inventory lock and reservation set.
+do
+local services=RS.Shared.Services
+local PS=require(services.PotionService)
+local POL=require(services.PolisherService)
+local MS=require(services.MarketService)
+local BS=require(services.BallSkinService)
+local INV=require(services.InventoryService)
+local GS=require(services.GradeService)
+local TS=require(services.TraitService)
+local IT=require(services.InfinityTowerService)
+local OB=require(services.ObbyBonusService)
+local CS=game:GetService("CollectionService")
+local status=S.featureStatus
+local cooldown={}
+local function ready(key,seconds)
+ local now=os.clock() if now<(cooldown[key] or 0) then return false end cooldown[key]=now+seconds return true
+end
+local function alive() return S.running and gui.Parent~=nil end
+local function waitFor(predicate,seconds)
+ local finish=os.clock()+(seconds or 2)
+ repeat if predicate() then return true end task.wait(0.05) until not alive() or os.clock()>=finish
+ return predicate()
+end
+local function cashAllowed(price)
+ local cash=D.GetData().Currency.Cash or 0
+ if type(price)~="number" or price~=price or price<0 or price==math.huge or price>cash then return false end
+ if X.fullMarketBalance then return true end
+ return price<=cash*X.spendPercent/100 and cash-price>=X.reserveCash
+end
+local function ownedBox(name,variant)
+ local b=D.GetData().Inventory.Boxes[name] local e=b and b[variant] return e and e.Amount or 0
+end
+local function plot() return workspace.Map.PlotModels:FindFirstChild(P.Name) end
+local function baseParts()
+ local home=plot() local out={}
+ if home then for _,p in CS:GetTagged("DropperBasePart") do if p:IsDescendantOf(home) and p:GetAttribute("Unlocked") then table.insert(out,p) end end end return out
+end
+local function toolFor(kind,id)
+ local char=P.Character local backpack=P:FindFirstChildOfClass("Backpack")
+ for _,container in {char,backpack} do if container then for _,t in container:GetChildren() do if t:IsA("Tool") and t:GetAttribute("InventoryType")==kind and t:GetAttribute("InventoryKey")==id then return t end end end end
+end
+local function worker(name,period,fn)
+ task.spawn(function()
+ while alive() do
+ if S.enabled then
+ local ok,err=pcall(fn)
+ if not ok then status[name]="ERROR: "..tostring(err) S.errors+=1 S.lastError=name..": "..tostring(err) task.wait(3) end
+ end
+ task.wait(period)
+ end
+ end)
+end
+local heldSince={}
+S.shouldPolish=function(id)
+ if not X.polisher or not POL.IsUnlocked(P) then return false end
+ local tool=toolFor("Crate",id)
+ if tool then return not tool:GetAttribute("Shiny") end
+ heldSince[id]=heldSince[id] or os.clock()
+ return os.clock()-heldSince[id]<5
+end
+worker("Polisher",0.35,function()
+ if not X.polisher then status.Polisher="OFF" return end
+ if not POL.IsUnlocked(P) then status.Polisher="รอปลดล็อก • ขายบอลตามปกติ" return end
+ local home=plot() local part
+ for _,p in CS:GetTagged("PolisherCollectPart") do if home and p:IsDescendantOf(home) then part=p break end end
+ if not part then status.Polisher="ไม่พบเครื่องใน Base" return end
+ status.Polisher=string.format("รอขัด %.0f • ขัดแล้ว %.0f",POL.GetPendingCash(P),POL.GetPolishedCash(P))
+ if (part:GetAttribute("PolishedBallCount") or 0)>0 and INV.HasInventorySpace(P,1) and ready("polisherCollect",2) then R.CollectPolisherCrate:FireServer(part) end
+ if S.inventoryBusy or S.baseBusy then return end
+ for id in D.GetData().Crates do
+ local tool=toolFor("Crate",id)
+ if tool and not tool:GetAttribute("Shiny") and ready("deposit:"..id,5) then
+ local char=P.Character local human=char and char:FindFirstChildOfClass("Humanoid") if not human then return end
+ S.inventoryBusy=true
+ local previous=char:FindFirstChildOfClass("Tool")
+ local ok,err=pcall(function()
+ human:EquipTool(tool)
+ if not waitFor(function() return tool.Parent==char end,0.7) then return end
+ task.wait(0.18)
+ if not alive() or not S.enabled or not X.polisher then return end
+ R.DepositCrate:FireServer(part)
+ if waitFor(function()return D.GetData().Crates[id]==nil end,2) then S.confirmed.polishedDeposits=(S.confirmed.polishedDeposits or 0)+1 heldSince[id]=nil else status.Polisher="ฝากยังไม่ยืนยัน • ตรวจระยะเครื่อง" end
+ end)
+ if previous and previous.Parent and human.Parent then human:EquipTool(previous) end
+ S.inventoryBusy=false
+ if not ok then error(err) end
+ return
+ end
+ end
+ for id in heldSince do if not D.GetData().Crates[id] then heldSince[id]=nil end end
+end)
+worker("Potions",0.75,function()
+ local rolling=(X.grade and next(X.gradeTargets)~=nil) or (X.trait and next(X.traitTargets)~=nil)
+ local requests={{"luckPotion","LuckPotion"},{"cashPotion","CashPotion"},{"speedPotion","GradeSpeedPotion"},{"bluetooth","BluetoothPotion"}}
+ for _,r in requests do
+ if not alive() or not S.enabled then return end
+ local key,name=r[1],r[2]
+ local needed=X[key] and (key=="luckPotion" or key=="cashPotion" or (rolling and X.unit~=nil))
+ if key=="bluetooth" then needed=needed and ((X.grade and not GS.IsInRollRange(P,GS.HITBOX_TAG)) or (X.trait and not GS.IsInRollRange(P,TS.HITBOX_TAG))) end
+ local before=D.GetData().Potions[name] or 0
+ if needed and before>0 and not PS.IsPotionActive(P,name) and ready(name,8) then
+ R.UseItem:FireServer(name)
+ if waitFor(function()return PS.IsPotionActive(P,name) or (D.GetData().Potions[name] or 0)<before end,2) then status.Potions="ใช้ "..name.." แล้ว" S.confirmed.potions=(S.confirmed.potions or 0)+1 else status.Potions="ยังไม่ยืนยัน "..name end
+ end
+ end
+end)
+local function boxScore(name,var)
+ local score=0
+ for unit in BL[name].PlayerUnits do score=math.max(score,U.GetPlayerUnitCashPerDrop(P,{PlayerUnitName=unit,PlayerUnitVariant=var,PlayerUnitLevel=1})) end return score
+end
+worker("Market",1.5,function()
+ if not X.market then status.Market="OFF" return end
+ local purchaseRemote=R:FindFirstChild("MarketPurchaseCash")
+ if not purchaseRemote then status.Market="Unavailable: เซิร์ฟเวอร์นี้ไม่มีระบบซื้อ Market" return end
+ if S.inventoryBusy or S.baseBusy then status.Market="รอจัดกระเป๋า" return end
+ local seed=MS.GetSeed() local entries=MS.GetBoxes(seed)
+ table.sort(entries,function(a,b)return boxScore(a.BoxName,a.Variant)>boxScore(b.BoxName,b.Variant) end)
+ local total,lowest=0,math.huge
+ for name,vars in D.GetData().Inventory.Boxes do for var,e in vars do if (e.Amount or 0)>0 and BL[name] then total+=e.Amount lowest=math.min(lowest,boxScore(name,var)) end end end
+ if total>config.keepLockers then status.Market="รอขายส่วนเกินก่อนซื้อ" return end
+ status.Market="รอสต็อก / งบ / กล่องที่ดีกว่า"
+ for _,e in entries do
+ local name,var=e.BoxName,e.Variant local purchase=D.GetData().Market[name.."_"..var]
+ local count=purchase and purchase.Seed==seed and purchase.AmountPurchased or 0
+ local price=MS.GetPrice(e.BoxData,var)
+ if e.Stock>count and config.boxes[name]~=false and (not config.variantFilter or config.variants[var]~=false) and (total<config.keepLockers or boxScore(name,var)>lowest) and cashAllowed(price) and B.HasBoxInventorySpace(P,1) and ready("market:"..name..var,8) then
+ local before=ownedBox(name,var)
+ S.inventoryBusy=true
+ local ok,err=pcall(function()
+ purchaseRemote:FireServer(name,var)
+ if waitFor(function()return ownedBox(name,var)>before end,2) then status.Market="ซื้อ "..var.." "..name.." แล้ว" S.confirmed.market=(S.confirmed.market or 0)+1 else status.Market="คำสั่งซื้อยังไม่ยืนยัน" end
+ end)
+ S.inventoryBusy=false if not ok then error(err) end return
+ end
+ end
+end)
+local function checkBallSkins()
+ if not X.skinEquip and not X.skinBuy then status.Skins="OFF" return end
+ if S.inventoryBusy or S.baseBusy then return end
+ local parts=baseParts()
+ local ranked={}
+ for _,p in parts do if p:GetAttribute("Type")=="PlayerUnit" then
+ local current=BS.GetMultiplier(p:GetAttribute("PlayerUnitBallSkin"))
+ table.insert(ranked,{part=p,base=partBase(p)/current,level=p:GetAttribute("PlayerUnitLevel") or 1,current=current})
+ end end
+ table.sort(ranked,function(a,b)
+ if a.base~=b.base then return a.base>b.base end
+ if a.level~=b.level then return a.level>b.level end
+ return a.part:GetFullName()<b.part:GetFullName()
+ end)
+ local function bestTarget(name)
+ local mult=BS.GetMultiplier(name)
+ for rank,entry in ranked do if mult>entry.current then return entry.part,rank end end
+ end
+ local function skinTransaction(fn)
+ S.inventoryBusy=true
+ local ok,err=pcall(fn)
+ S.inventoryBusy=false
+ if not ok then error(err) end
+ end
+ local skins={} for name,n in D.GetData().Inventory.BallSkins do if n>0 and not BS.IsBallSkinFavorited(P,name) then table.insert(skins,name) end end
+ table.sort(skins,function(a,b)local am,bm=BS.GetMultiplier(a),BS.GetMultiplier(b) if am==bm then return a<b end return am>bm end)
+ S.skinPlan={}
+ for i=1,math.min(3,#ranked) do local entry=ranked[i] table.insert(S.skinPlan,{rank=i,name=entry.part:GetAttribute("PlayerUnitName"),baseWithoutSkin=entry.base,level=entry.level,currentMultiplier=entry.current}) end
+ if X.skinEquip then for _,name in skins do
+ local p,rank=bestTarget(name)
+ if p and ready("skinEquip",5) then
+ skinTransaction(function()
+ R.ApplyBallSkinToDropper:FireServer(p,name)
+ if waitFor(function()return p:GetAttribute("PlayerUnitBallSkin")==name end,2) then
+ status.Skins="ใส่ "..name.." ให้ "..tostring(p:GetAttribute("PlayerUnitName")).." • อันดับ "..rank
+ S.confirmed.skins=(S.confirmed.skins or 0)+1
+ S.lastSkinEquip={skin=name,striker=p:GetAttribute("PlayerUnitName"),rank=rank}
+ else status.Skins="ใส่สกินยังไม่ยืนยัน" end
+ end) return
+ end
+ end end
+ if X.skinBuy then
+ local entries=BS.GetStock(BS.GetSeed()) table.sort(entries,function(a,b)return BS.GetMultiplier(a.BallSkinName)>BS.GetMultiplier(b.BallSkinName) end)
+ local hasStock,hasBudget=false,false
+ for _,e in entries do
+ local name=e.BallSkinName
+ if BS.GetRemainingStock(P,e)>0 then
+ hasStock=true
+ if cashAllowed(BS.GetPrice(name)) then hasBudget=true end
+ end
+ if BS.GetRemainingStock(P,e)>0 and cashAllowed(BS.GetPrice(name)) and INV.HasInventorySpace(P,1) and ready("skinBuy:"..name,8) then
+ local before=BS.GetOwnedAmount(P,name)
+ local purchasedBefore=BS.GetAmountPurchased(P,name)
+ skinTransaction(function()
+ R.BallSkinPurchaseCash:FireServer(name)
+ if waitFor(function()return BS.GetOwnedAmount(P,name)>before or BS.GetAmountPurchased(P,name)>purchasedBefore end,2) then
+ status.Skins="ซื้อ "..name.." แล้ว" S.confirmed.skinBuys=(S.confirmed.skinBuys or 0)+1
+ cooldown["skinBuy:"..name]=os.clock()+0.35
+ else status.Skins="ซื้อสกินยังไม่ยืนยัน" end
+ S.skinBuyStatus=status.Skins
+ end) return
+ end
+ end
+ if not hasStock then S.skinBuyStatus="สินค้าหมด • รอร้านเติมอัตโนมัติ"
+ elseif not INV.HasInventorySpace(P,1) then S.skinBuyStatus="กระเป๋าเต็ม • รอช่องว่างก่อนซื้อสกิน"
+ elseif not hasBudget then S.skinBuyStatus="เงินไม่พอ หรือเกินงบที่ตั้งไว้"
+ else S.skinBuyStatus="กำลังตรวจสต็อกสกิน" end
+ else S.skinBuyStatus="OFF"
+ end
+ status.Skins=X.skinBuy and S.skinBuyStatus or "รอสกินที่ดีกว่า / สต็อก / งบ"
+end
+S.checkBallSkins=checkBallSkins
+worker("Ball Skin",0.35,checkBallSkins)
+S.pickTrainingUnit=function(nextOne)
+ if X.grade or X.trait then status.Training="ปิดการสุ่มก่อนเปลี่ยนตัว" return end
+ local units={}
+ for id,u in D.GetData().PlayerUnits do if not u.Equipped and not U.IsPlayerUnitFavorited(P,id) then table.insert(units,{id=id,score=unitBase(u)}) end end
+ table.sort(units,function(a,b)if a.score==b.score then return a.id<b.id end return a.score>b.score end)
+ if #units==0 then status.Training="ไม่มีตัวสำรอง • นำตัวออกจาก Base ก่อน" return end
+ local index=1 if nextOne then for i,u in units do if u.id==X.unit then index=i%#units+1 break end end end
+ table.clear(S.reservedUnits) X.unit=units[index].id S.reservedUnits[X.unit]=true
+ status.Training="เลือกตัวแล้ว • พร้อมตั้งเป้าหมาย"
+end
+local rollCounts={grade=0,trait=0} local enabledBefore={}
+local gradeRevisions={}
+for _,signalName in {"PlayerUnitGradeChanged","PlayerUnitGradePityChanged"} do
+ table.insert(connections,D.Signals[signalName]:Connect(function(id) if id then gradeRevisions[id]=(gradeRevisions[id] or 0)+1 end end))
+end
+S.openTrainingPicker=function()
+ if S.selectingTraining then return end
+ X.grade=false X.trait=false
+ S.selectingTraining=true
+ status.Training="รอเลือกตัวจากหน้าของเกม"
+ task.spawn(function()
+ local oldVisible=panel.Visible local closeConnection
+ local function restore()
+ S.selectingTraining=false
+ if panel.Parent then panel.Visible=oldVisible end
+ if closeConnection then closeConnection:Disconnect() closeConnection=nil end
+ end
+ local ok,err=pcall(function()
+ if not waitFor(function()return not S.baseBusy end,15) or not alive() then status.Training="ตัวนี้ไม่พร้อมเลือกแล้ว • กรุณาเปิด Select ใหม่" restore() return end
+ local nativeGui=P.PlayerGui:FindFirstChild("SelectGui")
+ local frame=nativeGui and nativeGui:FindFirstChild("MainFrame")
+ if not frame then status.Training="ไม่พบหน้าเลือกตัวของเกม" restore() return end
+ local picker=require(RS.Client.Core.Gui.SelectGuiClient)
+ local excluded={}
+ for id in D.GetData().PlayerUnits do if U.IsPlayerUnitFavorited(P,id) or G.BlueFarmSpareSale.pending==id then excluded[id]=true end end
+ panel.Visible=false
+ picker.Open(function(id)
+ if not alive() then return end
+ local unit=D.GetData().PlayerUnits[id]
+ if not unit or unit.Equipped or U.IsPlayerUnitFavorited(P,id) or G.BlueFarmSpareSale.pending==id then
+ status.Training="ตัวนี้ไม่พร้อมเลือกแล้ว • กรุณาเปิด Select ใหม่" restore() return
+ end
+ table.clear(S.reservedUnits) X.unit=id S.reservedUnits[id]=true
+ status.Training="เลือกตัวแล้ว • พร้อมตั้งเป้าหมาย"
+ restore()
+ end,nil,excluded,{IncludeEquipped=false})
+ closeConnection=frame:GetPropertyChangedSignal("Visible"):Connect(function()if not frame.Visible then restore() end end)
+ table.insert(connections,closeConnection)
+ end)
+ if not ok then status.Training=tostring(err) restore() end
+ end)
+end
+worker("Training",0.03,function()
+ if type(S.checkCollectionGround)~="function" or type(S.returnTrainingSafe)~="function" then return end
+ if S.obbyTravel then return end
+ for _,kind in {"grade","trait"} do
+ if X[kind] and not enabledBefore[kind] then rollCounts[kind]=0 end
+ enabledBefore[kind]=X[kind]
+ end
+ if not X.grade and not X.trait then return end
+ local id=X.unit local unit=id and D.GetData().PlayerUnits[id]
+ if not unit then status.Training="เลือก Striker สำรองก่อน" return end
+ if unit.Equipped then status.Training="นำตัวที่เลือกออกจาก Base ก่อน" return end
+ if U.IsPlayerUnitFavorited(P,id) then X.grade=false X.trait=false status.Training="หยุด: ตัวนี้เป็น Favorite" return end
+ for _,kind in {"grade","trait"} do
+ if X[kind] then
+ if not alive() or not S.enabled then return end
+ local service=kind=="grade" and GS or TS
+ local token=kind=="grade" and "Grade" or "Trait"
+ local targets=kind=="grade" and X.gradeTargets or X.traitTargets
+ if not next(targets) then X[kind]=false status.Training="เลือกรายการเป้าหมายก่อนเปิดสุ่ม" continue end
+ local result=kind=="grade" and (unit.Grade or "F") or unit.Trait
+ local reached=result~=nil and targets[result]==true
+ if reached then X[kind]=false status.Training=token.." ถึงเป้าหมายแล้ว" continue end
+ if not X.noRollLimit and rollCounts[kind]>=X.rollLimit then X[kind]=false status.Training=token.." ครบจำนวนที่กำหนด" continue end
+ local useTokens=kind~="grade" or not X.gradeCash
+ local before=D.GetData().Tokens[token] or 0
+ if useTokens then
+ if before<=0 then X[kind]=false status.Training=token.." Token หมด" continue end
+ else
+ local cost=U.GetGradeRerollCost(P,{PlayerUnitName=unit.PlayerUnitName,PlayerUnitVariant=unit.Variant,PlayerUnitLevel=unit.Level,PlayerUnitTrait=unit.Trait})
+ if type(cost)~="number" or cost<0 or cost==math.huge or cost>(D.GetData().Currency.Cash or 0) then X.grade=false status.Training="เงินไม่พอสุ่ม Grade" continue end
+ end
+ local needsTravel=not GS.CanReachRollStation(P,service.HITBOX_TAG)
+ if needsTravel and (not X.trainingTP or (D.GetData().Potions.BluetoothPotion or 0)>0) then
+ if needsTravel and not X.trainingTP then
+ status.Training="อยู่นอกระยะสถานีสุ่ม" continue
+ end
+ if ready("roll:"..kind,service.GetRerollCooldown(P,useTokens)+0.02) then
+ local trip
+ local function restoreTraining()
+ if trip and P.Character==trip.char and trip.root.Parent and trip.human.Health>0 then
+ local safePoint=S.checkCollectionGround and S.checkCollectionGround(trip.origin.Position)
+ if safePoint then trip.root.AssemblyLinearVelocity=Vector3.zero trip.root.AssemblyAngularVelocity=Vector3.zero trip.root.CFrame=CFrame.new(safePoint)*trip.origin.Rotation end
+ if S.returnTrainingSafe then S.returnTrainingSafe(trip.origin) end
+ end
+ S.trainingTravel=false
+ end
+ local rollOK,rollError=pcall(function()
+ if needsTravel then
+ S.trainingTravel=true
+ if S.stopCollectionTravel then S.stopCollectionTravel() end
+ local char=P.Character local root=char and char:FindFirstChild("HumanoidRootPart") local human=char and char:FindFirstChildOfClass("Humanoid")
+ if not root or not human or human.Health<=0 or root.Anchored or human.Sit then status.Training="Waiting for character" return end
+ local origin=S.checkCollectionGround and S.checkCollectionGround(root.Position)
+ local destination
+ for _,station in CS:GetTagged(service.HITBOX_TAG) do
+ if station:IsA("BasePart") then
+ for _,offset in {Vector3.new(0,0,16),Vector3.new(16,0,0),Vector3.new(-16,0,0),Vector3.new(0,0,-16),Vector3.zero} do
+ local sample=station.Position+offset+Vector3.new(0,-station.Size.Y/2+3,0)
+ local point=S.checkCollectionGround(sample)
+ if point and (point-station.Position).Magnitude<20 then destination=point break end
+ end
+ end
+ if destination then break end
+ end
+ if not origin or not destination then status.Training="No safe station travel point" return end
+ trip={char=char,root=root,human=human,origin=CFrame.new(origin)*root.CFrame.Rotation}
+ root.AssemblyLinearVelocity=Vector3.zero root.CFrame=CFrame.new(destination)*root.CFrame.Rotation
+ task.wait(0.35)
+ if not alive() or not S.enabled or not X[kind] or P.Character~=char or not GS.CanReachRollStation(P,service.HITBOX_TAG) then status.Training="Station travel cancelled" return end
+ root.AssemblyLinearVelocity=Vector3.zero root.AssemblyAngularVelocity=Vector3.zero root.CFrame=CFrame.new(destination)*root.CFrame.Rotation
+ status.Training="TP • Waiting for station range"
+ task.wait(0.3)
+ local arrived=waitFor(function()return P.Character~=char or (GS.IsInRollRange(P,service.HITBOX_TAG) and (root.Position-destination).Magnitude<8) end,1.2)
+ if not arrived or not alive() or not S.enabled or not X[kind] or P.Character~=char or human.Health<=0 or not GS.CanReachRollStation(P,service.HITBOX_TAG) then status.Training="Station travel cancelled or out of range" return end
+ S.trainingTrips=(S.trainingTrips or 0)+1
+ end
+ local old=unit[token]
+ local cashBefore=D.GetData().Currency.Cash or 0
+ local revision=gradeRevisions[id] or 0
+ rollCounts[kind]+=1
+ if kind=="grade" then R.NewRerollPlayerUnitGrade:FireServer(id,useTokens,unit.Grade) else R.RerollPlayerUnitTrait:FireServer(id,unit.Trait) end
+ local changed=waitFor(function()local u=D.GetData().PlayerUnits[id] return not u or u[token]~=old or (useTokens and (D.GetData().Tokens[token] or 0)<before) or (kind=="grade" and (gradeRevisions[id] or 0)>revision) end,2)
+ local changed=waitFor(function()local u=D.GetData().PlayerUnits[id] return not u or u[token]~=old or (useTokens and (D.GetData().Tokens[token] or 0)<before) or (kind=="grade" and (gradeRevisions[id] or 0)>revision) or (not useTokens and (D.GetData().Currency.Cash or 0)<cashBefore) end,3)
+ status.Training=token.." "..rollCounts[kind].."/"..(X.noRollLimit and "∞" or tostring(math.floor(X.rollLimit)))..(changed and " • ยืนยันแล้ว" or " • ไม่ยืนยัน: หยุด")
+ if not changed then X[kind]=false else S.confirmed.rolls=(S.confirmed.rolls or 0)+1 end
+ end)
+ restoreTraining()
+ if not rollOK then error(rollError) end
+ break
+ end
+ end
+ end
+end)
+local function latestTower()
+ for i=#towerNames,1,-1 do
+ if not IT.GetPlayBlockReason(P,towerNames[i].name) then return towerNames[i].name end
+ end
+ return towerNames[1].name
+end
+S.openTowerMenu=function()
+ task.spawn(function()
+ local oldVisible=panel.Visible local closeConns={}
+ local function restore()
+ S.shopOpen=false if panel.Parent then panel.Visible=oldVisible end
+ for _,c in closeConns do c:Disconnect() end table.clear(closeConns)
+ end
+ local ok,err=pcall(function()
+ local native=P.PlayerGui:FindFirstChild("InfinityTowerGui") if not native then error("InfinityTowerGui unavailable") end
+ S.shopOpen=true panel.Visible=false
+ require(RS.Client.Core.Gui.InfinityTowerGuiClient).Open()
+ for _,name in {"FloorSelectionMainFrame","UnitsSelectionMainFrame","BattleMainFrame"} do
+ local frame=native:FindFirstChild(name)
+ if frame then
+ local c=frame:GetPropertyChangedSignal("Visible"):Connect(function()
+ task.delay(0.3,function()
+ if not alive() or not S.shopOpen then return end
+ local any=false
+ for _,n in {"FloorSelectionMainFrame","UnitsSelectionMainFrame","BattleMainFrame"} do local f=native:FindFirstChild(n) if f and f.Visible then any=true end end
+ local selectGui=P.PlayerGui:FindFirstChild("SelectGui")
+ if selectGui and selectGui.MainFrame.Visible then any=true end
+ if not any then restore() end
+ end)
+ end)
+ table.insert(closeConns,c) table.insert(connections,c)
+ end
+ end
+ end)
+ if not ok then status.Tower="ไม่พบหน้าหอคอย: "..tostring(err) restore() end
+ end)
+end
+S.pickTowerSlot=function(slot)
+ if X.towerBest then status.Tower="เลือกนักเตะเอง: ปิด Auto Equip Best ก่อน" return end
+ if S.selectingTraining then return end
+ S.selectingTraining=true
+ task.spawn(function()
+ local oldVisible=panel.Visible local c
+ local function restore()
+ S.selectingTraining=false if panel.Parent then panel.Visible=oldVisible end
+ if c then c:Disconnect() c=nil end
+ end
+ local ok,err=pcall(function()
+ if not waitFor(function()return not S.baseBusy end,15) then restore() return end
+ local excluded={}
+ for i,id in X.towerTeam do if i~=slot then excluded[id]=true end end
+ for id in S.reservedUnits do excluded[id]=true end
+ if G.BlueFarmSpareSale.pending then excluded[G.BlueFarmSpareSale.pending]=true end
+ panel.Visible=false
+ require(RS.Client.Core.Gui.SelectGuiClient).Open(function(id)
+ if not alive() then return end
+ if D.GetData().PlayerUnits[id] and not excluded[id] then
+ X.towerTeam[slot]=id table.clear(S.towerProtected)
+ for _,unitId in X.towerTeam do S.towerProtected[unitId]=true end
+ end
+ restore()
+ end,nil,excluded,{IncludeEquipped=true})
+ local frame=P.PlayerGui.SelectGui.MainFrame
+ c=frame:GetPropertyChangedSignal("Visible"):Connect(function()if not frame.Visible then restore() end end)
+ table.insert(connections,c)
+ end)
+ if not ok then status.Tower=tostring(err) restore() end
+ end)
+end
+local towerManaged=false local towerActive=nil
+worker("Tower",3,function()
+ if X.towerLatest then X.towerName=latestTower() end
+ if not X.tower then
+ if towerManaged and towerActive then R.SetInfinityTowerAutoBattle:FireServer(towerActive,false) towerManaged=false end
+ status.Tower="OFF" return
+ end
+ local current=R.GetInfinityTowerBattleState:InvokeServer()
+ if not alive() or not S.enabled or not X.tower then return end
+ if current then
+ towerActive=current.TowerName
+ if not current.AutoBattle then R.SetInfinityTowerAutoBattle:FireServer(current.TowerName,true) end
+ towerManaged=true status.Tower=current.TowerName.." • ชั้น "..tostring(current.Floor).." • Auto Battle" return
+ end
+ local reason=IT.GetPlayBlockReason(P,X.towerName) if reason then status.Tower=reason return end
+ if not ready("towerStart",12) then return end
+ local team={}
+ if X.towerBest then
+ local battle=require(RS.Shared.Services.InfinityTowerBattleService)
+ local units={} for id in D.GetData().PlayerUnits do if not S.reservedUnits[id] then table.insert(units,{id=id,score=battle.GetDamageFromCashPerDrop(U.GetDamageBasis(P,id))*battle.GetHealthFromCashPerDrop(U.GetHealthBasis(P,id))}) end end
+ table.sort(units,function(a,b)if a.score==b.score then return a.id<b.id end return a.score>b.score end)
+ for i=1,math.min(#units,require(RS.Shared.Constants).InfinityTowerUnitSlots) do table.insert(team,units[i].id) end
+ else
+ local seen={}
+ for i=1,require(RS.Shared.Constants).InfinityTowerUnitSlots do
+ local id=X.towerTeam[i]
+ if id and D.GetData().PlayerUnits[id] and not seen[id] and not S.reservedUnits[id] then table.insert(team,id) seen[id]=true end
+ end
+ end
+ if #team==0 then status.Tower="ยังไม่ได้เลือกทีมหอคอย" return end
+ local result=R.StartInfinityTowerBattle:InvokeServer(X.towerName,team)
+ if type(result)=="table" and result.TowerName then
+ towerActive=result.TowerName towerManaged=true
+ if alive() and S.enabled and X.tower then R.SetInfinityTowerAutoBattle:FireServer(result.TowerName,true) end
+ status.Tower=result.TowerName.." • เริ่มทีม "..#team.." ตัว" S.confirmed.towerStarts=(S.confirmed.towerStarts or 0)+1
+ else status.Tower="เริ่มรอบยังไม่ยืนยัน" end
+end)
+-- Also disable server auto-battle when the master pause is used.
+task.spawn(function() while alive() do if towerManaged and towerActive and (not S.enabled or not X.tower) then pcall(function()R.SetInfinityTowerAutoBattle:FireServer(towerActive,false)end) towerManaged=false end task.wait(0.25) end if towerManaged and towerActive then pcall(function()R.SetInfinityTowerAutoBattle:FireServer(towerActive,false)end) end end)
+local rains={} local markers={}
+local function addRain(data) if type(data)=="table" and data.Id then rains[data.Id]=data end end
+table.insert(connections,R.ItemRainDrop.OnClientEvent:Connect(addRain))
+table.insert(connections,R.ItemRainRemoved.OnClientEvent:Connect(function(id) rains[id]=nil end))
+local function mark(key,part,pos,text)
+ local m=markers[key]
+ if not m then
+ local anchor=part
+ if not anchor then anchor=make("Part",workspace,{Name="BlueFarmMarker",Size=Vector3.new(0.1,0.1,0.1),Anchored=true,CanCollide=false,CanTouch=false,CanQuery=false,Transparency=1,Position=pos}) end
+ local bb=make("BillboardGui",gui,{Adornee=anchor,Size=UDim2.fromOffset(175,38),StudsOffsetWorldSpace=Vector3.new(0,3,0),AlwaysOnTop=true})
+ local l=label(bb,text,38) l.Size=UDim2.fromScale(1,1) l.TextColor3=blue l.TextStrokeTransparency=0.3 l.TextXAlignment=Enum.TextXAlignment.Center
+ m={billboard=bb,anchor=not part and anchor or nil,label=l} markers[key]=m
+ end
+ m.seen=true m.label.Text=text if m.anchor then m.anchor.Position=pos end
+end
+local function clearMarkers()
+ for key,m in markers do m.billboard:Destroy() if m.anchor then m.anchor:Destroy() end markers[key]=nil end
+end
+table.insert(connections,gui.Destroying:Connect(clearMarkers))
+local mapLibrary=require(RS.Shared.Core.Storage.Game.CollectableObjectsLibrary)
+local rainLibrary=require(RS.Shared.Core.Storage.Game.ItemRainLibrary)
+local pathfinding=game:GetService("PathfindingService")
+local collect={confirmed=0,requests=0,walking=false,target=nil,status="",mapCount=0,rainCount=0,variantCount=0}
+S.collect=collect
+local candidates={} local pending={} local watched={}
+local tpTrip local returnFromTP
+local routeBlocked={} local manualUntil=0 local walkingHumanoid
+S.attemptedTargets=setmetatable({},{__mode="k"})
+S.attemptedRain={}
+S.pickupVisuals={}
+S.canTravelTarget=function(c)
+ local entry=c.node and S.attemptedTargets[c.node] or S.attemptedRain[c.id]
+ return not entry or (type(entry)=="table" and entry.count<2 and os.clock()>=entry.nextAt and c.visual and c.visual.Parent~=nil)
+end
+local function manualControl()
+ for _,key in {Enum.KeyCode.W,Enum.KeyCode.A,Enum.KeyCode.S,Enum.KeyCode.D,Enum.KeyCode.Space} do
+ if UIS:IsKeyDown(key) then manualUntil=os.clock()+3 return true end
+ end
+ return os.clock()<manualUntil
+end
+local function ownedItem(name)
+ local data=D.GetData()
+ return (tonumber((data.Tokens or {})[name]) or 0)+(tonumber((data.Potions or {})[name]) or 0)+(tonumber((data.VariantTokens or {})[name]) or 0)
+end
+local function confirmPickup(key)
+ local entry=pending[key] if not entry or entry.checking then return end
+ entry.checking=true
+ task.spawn(function()
+ if waitFor(function()return ownedItem(entry.item)>entry.before end,1.5) then
+ collect.confirmed+=1 S.confirmed.mapAndEventItems=collect.confirmed
+ if tpTrip and tpTrip.key==key and returnFromTP then returnFromTP(true) end
+ end
+ if pending[key]==entry then pending[key]=nil end
+ end)
+end
+local function watchNode(node)
+ if watched[node] then return end
+ watched[node]=true
+ table.insert(connections,node:GetAttributeChangedSignal("Occupied"):Connect(function()
+ if node:GetAttribute("Occupied")~=true then confirmPickup(node) end
+ if node:GetAttribute("Occupied")~=true then confirmPickup(node)
+ else S.attemptedTargets[node]=nil routeBlocked[node]=nil end
+ end))
+end
+local function requestPickup(key,item,callback)
+ local previous=pending[key]
+ if previous and os.clock()-previous.at<3 then return end
+ pending[key]={item=item,before=ownedItem(item),at=os.clock()}
+ callback() collect.requests+=1
+end
+table.insert(connections,R.ItemRainRemoved.OnClientEvent:Connect(function(id) confirmPickup("rain:"..tostring(id)) end))
+local function enabledTarget(c)
+ return c.kind=="map" and X.mapCollect or c.kind~="map" and X.events
+end
+local function exists(c)
+ if c.visual and not c.visual:IsDescendantOf(workspace) then return false end
+ if c.node then return c.node:IsDescendantOf(workspace) and c.node:GetAttribute("Occupied")==true and (c.node.Position-c.pos).Magnitude<1 end
+ return rains[c.id]~=nil
+end
+local activeTravelTween local anchoredRoot local previousAnchored local rotateHumanoid local previousAutoRotate
+local lastSafe local travelOrigin
+-- A missing raycast never becomes a destination. Sample the footprint as well
+-- as its centre so a tiny prop or an edge cannot be mistaken for a floor.
+local function safeStanding(pos,character,human,root,ignore)
+ if typeof(pos)~="Vector3" or pos.X~=pos.X or pos.Y~=pos.Y or pos.Z~=pos.Z or pos.Magnitude>1e6 then return nil end
+ local height=human.RigType==Enum.HumanoidRigType.R6 and 3 or math.max(2.5,human.HipHeight+root.Size.Y/2)
+ local params=RaycastParams.new() params.FilterType=Enum.RaycastFilterType.Exclude
+ params.FilterDescendantsInstances=ignore and {character,ignore} or {character} params.RespectCanCollide=true
+ local centre=workspace:Raycast(pos+Vector3.new(0,1,0),Vector3.new(0,-height-5,0),params)
+ if not centre or centre.Normal.Y<0.7 or centre.Position.Y>pos.Y+0.5 or pos.Y-centre.Position.Y>height+3 then return nil end
+ if centre.Instance:IsA("BasePart") and not centre.Instance.Anchored then return nil end
+ for _,offset in {Vector3.new(1,0,0),Vector3.new(-1,0,0),Vector3.new(0,0,1),Vector3.new(0,0,-1)} do
+ local hit=workspace:Raycast(centre.Position+offset+Vector3.new(0,1,0),Vector3.new(0,-2,0),params)
+ if not hit or hit.Normal.Y<0.7 or math.abs(hit.Position.Y-centre.Position.Y)>0.65 then return nil end
+ end
+ local destination=centre.Position+Vector3.new(0,height+0.15,0)
+ -- Reject standing inside collidable geometry (e.g. a shop podium).
+ -- Mesh bounding boxes can span the entire stadium; use actual collision rays.
+ for _,offset in {Vector3.zero,Vector3.new(0.8,0,0),Vector3.new(-0.8,0,0),Vector3.new(0,0,0.8),Vector3.new(0,0,-0.8)} do
+ if workspace:Raycast(centre.Position+offset+Vector3.new(0,0.2,0),Vector3.new(0,height+2,0),params) then return nil end
+ end
+ return destination
+end
+local function safeReturn(frame,character,human,root)
+ local point=frame and safeStanding(frame.Position,character,human,root)
+ if not point and lastSafe and lastSafe.character==character then frame=lastSafe.frame point=safeStanding(frame.Position,character,human,root) end
+ if not point then
+ local plots=workspace:FindFirstChild("Map") and workspace.Map:FindFirstChild("PlotModels")
+ local home=plots and plots:FindFirstChild(P.Name) local spawn=home and home:FindFirstChild("SpawnPart")
+ if spawn and spawn:IsA("BasePart") then frame=spawn.CFrame point=safeStanding(spawn.Position+Vector3.new(0,3,0),character,human,root) end
+ end
+ if not point then return false end
+ root.AssemblyLinearVelocity=Vector3.zero root.AssemblyAngularVelocity=Vector3.zero
+ root.CFrame=CFrame.new(point)*frame.Rotation
+ lastSafe={character=character,frame=root.CFrame}
+ return true
+end
+S.checkCollectionGround=function(pos)
+ local char=P.Character local root=char and char:FindFirstChild("HumanoidRootPart") local human=char and char:FindFirstChildOfClass("Humanoid")
+ return root and human and safeStanding(pos,char,human,root) or nil
+end
+S.returnTrainingSafe=function(frame)
+ local char=P.Character local root=char and char:FindFirstChild("HumanoidRootPart") local human=char and char:FindFirstChildOfClass("Humanoid")
+ if root and human and human.Health>0 then return safeReturn(frame,char,human,root) end
+ return false
+end
+returnFromTP=function(received)
+ local trip=tpTrip if not trip then return end
+ tpTrip=nil
+ if P.Character~=trip.character or not trip.root.Parent or trip.human.Health<=0 or manualControl() then return end
+ if P.Character~=trip.character or not trip.root.Parent or trip.human.Health<=0 then
+ if trip.root.Parent then trip.root.Anchored=trip.wasAnchored end
+ return end
+ local restored=safeReturn(trip.origin,trip.character,trip.human,trip.root)
+ trip.root.Anchored=trip.wasAnchored
+ if not restored then collect.status="No safe return point; travel paused" X.collectWalk=false return end
+ collect.tpReturns=(collect.tpReturns or 0)+1
+ collect.lastTPReturn={received=received==true,error=(trip.root.Position-trip.origin.Position).Magnitude}
+end
+local function stopWalking()
+ if tpTrip and returnFromTP then returnFromTP(false) end
+ if activeTravelTween then activeTravelTween:Cancel() activeTravelTween=nil end
+ if anchoredRoot then
+ if anchoredRoot.Parent then
+ local char=P.Character local human=char and char:FindFirstChildOfClass("Humanoid")
+ if human and anchoredRoot:IsDescendantOf(char) and human.Health>0 and not safeStanding(anchoredRoot.Position,char,human,anchoredRoot) then safeReturn(travelOrigin,char,human,anchoredRoot) end
+ anchoredRoot.Anchored=previousAnchored anchoredRoot.AssemblyLinearVelocity=Vector3.zero anchoredRoot.AssemblyAngularVelocity=Vector3.zero
+ end
+ anchoredRoot=nil
+ end
+ travelOrigin=nil
+ if rotateHumanoid then if rotateHumanoid.Parent then rotateHumanoid.AutoRotate=previousAutoRotate end rotateHumanoid=nil end
+ if walkingHumanoid and walkingHumanoid.Parent then
+ local root=P.Character and P.Character:FindFirstChild("HumanoidRootPart")
+ if root then walkingHumanoid:MoveTo(root.Position) end
+ end
+ walkingHumanoid=nil collect.walking=false collect.target=nil
+end
+S.stopCollectionTravel=stopWalking
+local function confirmObbyHome(char,root,human)
+ if P.Character~=char or not root.Parent or human.Health<=0 then return false end
+ for attempt=1,3 do
+ local home=workspace.Map.PlotModels:FindFirstChild(P.Name)
+ local spawn=home and home:FindFirstChild("SpawnPart")
+ local point=spawn and spawn:IsA("BasePart") and safeStanding(spawn.Position+Vector3.new(0,3,0),char,human,root)
+ if not point then S.obbyStatus="Home not loaded; will retry" return false end
+ root.AssemblyLinearVelocity=Vector3.zero root.AssemblyAngularVelocity=Vector3.zero
+ root.CFrame=CFrame.new(point)*spawn.CFrame.Rotation
+ local confirmed=waitFor(function()
+ return P.Character~=char or human.Health<=0 or ((root.Position-point).Magnitude<=8 and not P:GetAttribute("ObbyMode"))
+ end,1.25)
+ if P.Character~=char or human.Health<=0 then return false end
+ if confirmed and (root.Position-point).Magnitude<=8 and not P:GetAttribute("ObbyMode") then
+ lastSafe={character=char,frame=root.CFrame}
+ S.obbyHomeReturns=(S.obbyHomeReturns or 0)+1
+ S.obbyHomeCheck={confirmed=true,attempts=attempt,distance=(root.Position-point).Magnitude,obbyMode=false}
+ S.obbyStatus="Home confirmed • Obby Mode OFF"
+ return true
+ end
+ end
+ S.obbyHomeCheck={confirmed=false,obbyMode=P:GetAttribute("ObbyMode")==true}
+ S.obbyStatus="Return home not confirmed; will retry"
+ return false
+end
+worker("Auto Obby",1,function()
+ if not X.autoObby then return end
+ if S.trainingTravel or S.selectingTraining or S.shopOpen then S.obbyStatus="Waiting for Training / Shop" return end
+ if manualControl() then S.obbyStatus="Waiting: release movement keys for 3 seconds" return end
+ local char=P.Character local root=char and char:FindFirstChild("HumanoidRootPart") local human=char and char:FindFirstChildOfClass("Humanoid")
+ if not root or not human or human.Health<=0 or human.Sit then return end
+ local target local anyClaimable=false
+ for _,part in CS:GetTagged("ObbyBonusPart") do
+ if part:IsA("BasePart") and part:IsDescendantOf(workspace) and OB.CanClaimBonus(P,part.Name) then
+ anyClaimable=true
+ if ready("autoObby:"..part.Name,10) then target=part break end
+ end
+ end
+ if not target then
+ if not anyClaimable and P:GetAttribute("ObbyMode")==true then
+ S.obbyTravel=true stopWalking()
+ local ok,err=pcall(confirmObbyHome,char,root,human)
+ S.obbyTravel=false
+ if not ok then error(err) end
+ else S.obbyStatus=anyClaimable and "Waiting for retry cooldown" or "All bonuses on cooldown; waiting at home" end
+ return
+ end
+ S.obbyTravel=true stopWalking()
+ local origin=root.CFrame
+ local ok,err=pcall(function()
+ if root.Anchored or not safeStanding(origin.Position,char,human,root) then S.obbyStatus="Waiting for solid ground" return end
+ local destination=safeStanding(target.Position+Vector3.new(0,4,0),char,human,root)
+ if not destination then S.obbyStatus="No safe bonus platform" return end
+ local before=OB.GetBonusCooldownTimeLeft(P,target.Name)
+ root.AssemblyLinearVelocity=Vector3.zero root.CFrame=CFrame.new(destination)*origin.Rotation
+ task.wait(0.35)
+ if not alive() or not S.enabled or not X.autoObby or manualControl() or P.Character~=char or human.Health<=0 or not target.Parent then return end
+ if (root.Position-destination).Magnitude>3 then S.obbyStatus="Bonus travel not confirmed" return end
+ if OB.CanClaimBonus(P,target.Name) then R.ClaimObbyBonus:FireServer(target) end
+ local confirmed=waitFor(function()return OB.GetBonusCooldownTimeLeft(P,target.Name)>math.max(0,before) end,2)
+ S.obbyStatus=target.Name..(confirmed and " • Reward confirmed" or " • Reward unconfirmed")
+ if confirmed then S.confirmed.obby=(S.confirmed.obby or 0)+1 end
+ end)
+ if P.Character==char and root.Parent and human.Health>0 then confirmObbyHome(char,root,human) end
+ S.obbyTravel=false
+ if not ok then error(err) end
+end)
+
+table.insert(connections,UIS.InputBegan:Connect(function(input,processed)
+ if processed then return end
+ local key=input.KeyCode
+ if key==Enum.KeyCode.W or key==Enum.KeyCode.A or key==Enum.KeyCode.S or key==Enum.KeyCode.D or key==Enum.KeyCode.Space then
+ manualUntil=os.clock()+3
+ if collect.walking then stopWalking() end
+ end
+end))
+table.insert(connections,gui.Destroying:Connect(stopWalking))
+worker("Events",0.15,function()
+ for _,m in markers do m.seen=false end
+ local root=P.Character and P.Character:FindFirstChild("HumanoidRootPart")
+ if not root then clearMarkers() candidates={} return end
+ if ready("pickupVisuals",1) then
+ local visuals={}
+ for _,handler in filtergc("table",{Keys={"Node","BasePosition","TokenMaid"}},false) do
+ if typeof(handler.Node)=="Instance" and typeof(handler._token)=="Instance" and handler._token:IsDescendantOf(workspace) then visuals[handler.Node]=handler._token end
+ end
+ S.pickupVisuals=visuals
+ end
+ if (X.events or X.esp) and ready("rainSnapshot",15) then
+ local snapshot=R.GetItemRainDrops:InvokeServer()
+ if type(snapshot)=="table" then
+ local seen={} for _,r in snapshot do addRain(r) if type(r)=="table" and r.Id then seen[r.Id]=true end end
+ for id in rains do if not seen[id] then rains[id]=nil end end
+ end
+ end
+ if not alive() or not S.enabled then return end
+ local tokens,items,mapItems=0,0,0 local obbyLines={} local targets={}
+ local function target(c) if enabledTarget(c) then table.insert(targets,c) end end
+ local function target(c)
+ if c.node then c.visual=S.pickupVisuals[c.node] if not c.visual or not c.visual.Parent then return end end
+ if enabledTarget(c) then table.insert(targets,c) end
+ end
+ for _,node in CS:GetTagged("CollectableObject") do
+ if node:IsA("BasePart") and node:GetAttribute("Occupied")==true then
+ local def=mapLibrary[node:GetAttribute("ObjectKey")]
+ if def then
+ mapItems+=1 watchNode(node)
+ local distance=(root.Position-node.Position).Magnitude
+ if X.esp then mark(node,node,node.Position,def.ItemName..string.format(" • %.0fm",distance)) end
+ target({key=node,node=node,pos=node.Position,kind="map",name=def.ItemName})
+ if X.mapCollect and not (tpTrip and tpTrip.key==node) and distance<=5 and ready(node,3) then
+ local remote=R:FindFirstChild("CollectCollectableObject")
+ if remote then requestPickup(node,def.ItemName,function()remote:FireServer(node)end) end
+ end
+ end
+ end
+ end
+ for _,node in CS:GetTagged("VariantTokenSpawn") do
+ if node:IsA("BasePart") and node:GetAttribute("Occupied")==true then
+ tokens+=1 watchNode(node)
+ local item=node:GetAttribute("Variant")
+ local distance=(root.Position-node.Position).Magnitude
+ if X.esp then mark(node,node,node.Position,tostring(item or "Token")..string.format(" • %.0fm",distance)) end
+ target({key=node,node=node,pos=node.Position,kind="variant",name=tostring(item or "Variant Token")})
+ if X.events and item and not (tpTrip and tpTrip.key==node) and distance<=5 and ready(node,3) then requestPickup(node,item,function()R.CollectVariantTokenSpawn:FireServer(node)end) end
+ end
+ end
+ for id,r in rains do
+ local pos=r.LandPosition and (r.LandPosition+Vector3.new(0,3,0))
+ if typeof(pos)=="Vector3" and (r.LandAt or 0)<=workspace:GetServerTimeNow() then
+ local def=rainLibrary[r.Key]
+ if def then
+ items+=1 local distance=(root.Position-pos).Magnitude
+ local key="rain:"..tostring(id)
+ if X.esp then mark(key,nil,pos,def.ItemName..string.format(" • %.0fm",distance)) end
+ target({key=key,id=id,pos=pos,kind="rain",name=def.ItemName})
+ if X.events and not (tpTrip and tpTrip.key==key) and distance<=5 and ready(key,3) then requestPickup(key,def.ItemName,function()R.CollectItemRainItem:FireServer(id)end) end
+ end
+ end
+ end
+ candidates=targets collect.mapCount=mapItems collect.rainCount=items collect.variantCount=tokens
+ for _,p in CS:GetTagged("ObbyBonusPart") do
+ if p:IsA("BasePart") then
+ local remaining=OB.GetBonusCooldownTimeLeft(P,p.Name)
+ table.insert(obbyLines,p.Name..": "..math.ceil(remaining).."s")
+ local delta=root.Position-p.Position
+ if X.esp then mark(p,p,p.Position,p.Name.." • "..math.ceil(remaining).."s") end
+ if X.obby and Vector2.new(delta.X,delta.Z).Magnitude<=p.Size.X/2 and math.abs(delta.Y)<=p.Size.Y/2+8 and OB.CanClaimBonus(P,p.Name) and ready(p,5) then R.ClaimObbyBonus:FireServer(p) end
+ end
+ end
+ for key,m in markers do if not m.seen then m.billboard:Destroy() if m.anchor then m.anchor:Destroy() end markers[key]=nil end end
+ for key,entry in pending do if os.clock()-entry.at>8 and not entry.checking then pending[key]=nil end end
+ status.Events="ของตามแมพ "..mapItems.." • Token "..tokens.." • Item Rain "..items.."\n • เก็บยืนยัน "..collect.confirmed.." • ส่งคำขอ "..collect.requests.."\n"..collect.status
+ status.Obby=table.concat(obbyLines," / ")
+end)
+-- One TP/Tween operation at a time; all cancellation paths release character state.
+task.spawn(function()
+ local tweenService=game:GetService("TweenService")
+ local nextTeleportAt=0
+ while alive() do
+ local ok,err=pcall(function()
+ if not S.enabled or not X.collectWalk or not (X.mapCollect or X.events) or S.selectingTraining or S.trainingTravel or S.shopOpen then stopWalking() return end
+ if not S.enabled or not X.collectWalk or not (X.mapCollect or X.events) or S.selectingTraining or S.trainingTravel or S.obbyTravel or S.shopOpen then stopWalking() return end
+ if manualControl() then collect.status="พักเดิน: กำลังควบคุมตัวละคร" stopWalking() return end
+ local character=P.Character local root=character and character:FindFirstChild("HumanoidRootPart")
+ local human=character and character:FindFirstChildOfClass("Humanoid")
+ if not root or not human or human.Health<=0 or human.Sit or root.Anchored then stopWalking() return end
+ local originPoint=safeStanding(root.Position,character,human,root)
+ if not originPoint then collect.status="Waiting for solid ground" stopWalking() return end
+ lastSafe={character=character,frame=CFrame.new(originPoint)*root.CFrame.Rotation}
+ local target,nearest
+ for _,c in candidates do
+ if exists(c) and enabledTarget(c) and os.clock()>=(routeBlocked[c.key] or 0) then
+ if exists(c) and enabledTarget(c) and S.canTravelTarget(c) and os.clock()>=(routeBlocked[c.key] or 0) then
+ local distance=(root.Position-c.pos).Magnitude
+ if distance>4 and (not nearest or distance<nearest) then target=c nearest=distance end
+ end
+ end
+ if not target then collect.status=#candidates>0 and "หาเส้นทางไม่ได้ • ข้ามชั่วคราว" or "ไม่พบของให้เก็บ" stopWalking() return end
+ local mode=X.collectMode=="TP" and "TP" or "Tween"
+ collect.walking=true collect.target=target.name collect.mode=mode walkingHumanoid=human
+ collect.status="กำลังเก็บด้วย "..mode.." • "..target.name
+ local function continuing()
+ return alive() and S.enabled and X.collectWalk and X.collectMode==mode and not S.selectingTraining and not S.trainingTravel and not S.shopOpen and enabledTarget(target) and exists(target) and not manualControl() and P.Character==character and root.Parent~=nil and human.Health>0
+ return alive() and S.enabled and X.collectWalk and X.collectMode==mode and not S.selectingTraining and not S.trainingTravel and not S.obbyTravel and not S.shopOpen and enabledTarget(target) and exists(target) and not manualControl() and P.Character==character and root.Parent~=nil and human.Health>0
+ end
+ local params=RaycastParams.new() params.FilterType=Enum.RaycastFilterType.Exclude
+ local excluded={character} if target.node then table.insert(excluded,target.node) end
+ params.FilterDescendantsInstances=excluded params.RespectCanCollide=true
+ local height=human.RigType==Enum.HumanoidRigType.R6 and 3 or math.max(2.5,human.HipHeight+root.Size.Y/2)
+ local function standingPosition(pos)
+ return safeStanding(pos,character,human,root,target.node)
+ end
+ local approach=target.pos
+ local destinationPoint=standingPosition(approach)
+ if not destinationPoint or (destinationPoint-target.pos).Magnitude>4.8 then
+ routeBlocked[target.key]=os.clock()+15 collect.status="Unsafe item location; skipped" stopWalking() return
+ end
+ approach=destinationPoint
+ if mode=="TP" then
+ if not continuing() then stopWalking() return end
+ if os.clock()<nextTeleportAt then stopWalking() return end
+ nextTeleportAt=os.clock()+math.clamp(tonumber(X.collectTPDelay) or 0.5,0.2,10)
+ local trip={key=target.key,origin=lastSafe.frame,root=root,character=character,human=human,item=target.name,before=ownedItem(target.name)}
+ trip.wasAnchored=root.Anchored
+ tpTrip=trip
+ root.AssemblyLinearVelocity=Vector3.zero root.AssemblyAngularVelocity=Vector3.zero
+ if not continuing() then tpTrip=nil stopWalking() return end
+ -- One travel attempt per spawn. Only a new Occupied transition or rain id
+ -- makes it eligible again; a timeout cannot repeatedly teleport to stale data.
+ if target.node then
+ local previous=S.attemptedTargets[target.node]
+ S.attemptedTargets[target.node]={count=(type(previous)=="table" and previous.count or 0)+1,nextAt=os.clock()+12}
+ else S.attemptedRain[target.id]={count=1,nextAt=math.huge} end
+ root.Anchored=true
+ root.CFrame=CFrame.new(approach)*root.CFrame.Rotation
+ collect.teleports=(collect.teleports or 0)+1
+ -- Let the character position replicate before the first pickup request.
+ local requestAt=os.clock()+0.3
+ local finish=os.clock()+4.8
+ repeat
+ task.wait(0.02)
+ -- Release after one replication frame so the server receives the new
+ -- character position. The support watchdog remains active while waiting.
+ if tpTrip==trip and os.clock()>=requestAt-0.15 and root.Anchored then root.Anchored=trip.wasAnchored end
+ if tpTrip==trip and ((root.Position-approach).Magnitude>6 or not safeStanding(root.Position,character,human,root,target.node)) then
+ collect.status="Unsafe position; returning immediately" returnFromTP(false)
+ end
+ if tpTrip==trip and continuing() and os.clock()>=requestAt and (root.Position-target.pos).Magnitude<=4.8 then
+ requestAt=os.clock()+3.1
+ collect.lastPickup={kind=target.kind,distance=(root.Position-target.pos).Magnitude,item=target.name}
+ requestPickup(target.key,target.name,function()
+ if target.kind=="map" then R.CollectCollectableObject:FireServer(target.node)
+ elseif target.kind=="variant" then R.CollectVariantTokenSpawn:FireServer(target.node)
+ else R.CollectItemRainItem:FireServer(target.id) end
+ end)
+ end
+ if tpTrip==trip and ownedItem(trip.item)>trip.before then returnFromTP(true) end
+ until tpTrip~=trip or not continuing() or os.clock()>=finish
+ if tpTrip==trip and ownedItem(trip.item)<=trip.before then routeBlocked[target.key]=os.clock()+15 end
+ if tpTrip==trip then returnFromTP(false) end
+ stopWalking() return
+ end
+ local path=pathfinding:CreatePath({AgentRadius=1.5,AgentHeight=5,AgentCanJump=true,WaypointSpacing=5})
+ local path=pathfinding:CreatePath({AgentRadius=1.5,AgentHeight=5,AgentCanJump=true,WaypointSpacing=12})
+ path:ComputeAsync(root.Position,approach)
+ if not continuing() then stopWalking() return end
+ local waypoints
+ if path.Status==Enum.PathStatus.Success then
+ waypoints=path:GetWaypoints()
+ elseif not workspace:Raycast(root.Position,Vector3.new(approach.X,root.Position.Y,approach.Z)-root.Position,params) then
+ waypoints={{Position=approach}}
+ else routeBlocked[target.key]=os.clock()+15 collect.status="หาเส้นทางไม่ได้ • ข้ามชั่วคราว" stopWalking() return end
+ travelOrigin=lastSafe.frame
+ anchoredRoot=root previousAnchored=root.Anchored root.Anchored=true
+ rotateHumanoid=human previousAutoRotate=human.AutoRotate human.AutoRotate=false
+ root.AssemblyLinearVelocity=Vector3.zero root.AssemblyAngularVelocity=Vector3.zero
+ local started=os.clock()
+ for _,waypoint in waypoints do
+ if not continuing() or (root.Position-target.pos).Magnitude<=4 then break end
+ local destination=standingPosition(waypoint.Position)
+ if not destination then routeBlocked[target.key]=os.clock()+15 break end
+ while continuing() and (root.Position-destination).Magnitude>0.3 do
+ local speed=math.clamp(tonumber(X.collectTweenSpeed) or 60,5,500)
+ local speed=math.clamp(tonumber(X.collectTweenSpeed) or 600,5,2000)
+ local duration=math.max(0.02,(root.Position-destination).Magnitude/speed)
+ local tween=tweenService:Create(root,TweenInfo.new(duration,Enum.EasingStyle.Linear),{CFrame=CFrame.new(destination)*root.CFrame.Rotation})
+ activeTravelTween=tween tween:Play()
+ repeat task.wait(0.03) until not continuing() or tween.PlaybackState~=Enum.PlaybackState.Playing or X.collectTweenSpeed~=speed or (root.Position-target.pos).Magnitude<=4 or os.clock()-started>90
+ repeat task.wait(0.01) until not continuing() or tween.PlaybackState~=Enum.PlaybackState.Playing or X.collectTweenSpeed~=speed or (root.Position-target.pos).Magnitude<=4 or os.clock()-started>90
+ tween:Cancel() if activeTravelTween==tween then activeTravelTween=nil end
+ if os.clock()-started>90 or X.collectTweenSpeed==speed then break end
+ end
+ if os.clock()-started>90 then routeBlocked[target.key]=os.clock()+15 break end
+ end
+ collect.tweenTrips=(collect.tweenTrips or 0)+1
+ stopWalking()
+ end)
+ if not ok then stopWalking() collect.status=tostring(err) S.lastError="Collect movement: "..tostring(err) S.errors+=1 end
+ task.wait(0.15)
+ end
+ stopWalking()
+end)
+
+
+task.spawn(function()
+ while alive() do
+ local ok,err=pcall(function()
+ if not S.enabled then clearMarkers() end
+ for _,refresh in pageRefresh do refresh() end
+ hint.Text=not S.enabled and "PAUSED • Click Resume" or S.trainingTravel and "Training • Travelling" or S.obbyTravel and "Auto Obby • Collecting / Returning home" or S.collect and S.collect.walking and ("Collecting • "..tostring(S.collect.target or "")) or ("RUNNING • Upgrades "..S.strikerUpgrades.." • Opened "..S.opened.." • Errors "..S.errors)
+ conveyorBuyRow.Description.Text=S.buyStatus or "ใช้เงินเกม และตัวกรองด้านล่าง"
+ if not X.skinBuy then skinBuyRow.Description.Text="ปิด Auto Buy อยู่ • คลิกปุ่มนี้เพื่อเริ่มซื้อทั้งหมด"
+ elseif not S.enabled then skinBuyRow.Description.Text="สคริปต์หยุดอยู่ • กดปุ่มเริ่มด้านบนก่อน"
+ else skinBuyRow.Description.Text=S.skinBuyStatus or "กำลังตรวจสต็อกสกิน" end
+ configInfo.Text="Auto Save Config\n"..configState.status.."\n"..configState.file
+ local u=X.unit and D.GetData().PlayerUnits[X.unit]
+ selectedUnit.Text=u and (u.PlayerUnitName.." • Lv."..(u.Level or 1).." • "..tostring(u.Grade or "F").." / "..tostring(u.Trait or "None")) or "ยังไม่ได้เลือก Striker สำรอง"
+ trainingInfo.Text=status.Training or "เลือกตัว → ตั้งเป้าหมาย → เปิด Auto Grade/Trait"
+ local p={}
+ for _,name in {"LuckPotion","CashPotion","GradeSpeedPotion","BluetoothPotion"} do table.insert(p,name..": "..(D.GetData().Potions[name] or 0).." • "..math.ceil(PS.GetPotionTimeLeft(P,name)).."s") end
+ potionInfo.Text=table.concat(p,"\n")
+ if ready("stockUI",1) then
+ local stockRows={}
+ for _,entry in BS.GetStock(BS.GetSeed()) do
+ local name=entry.BallSkinName local left=BS.GetRemainingStock(P,entry)
+ table.insert(stockRows,BS.GetDisplayName(name).." ×"..BS.GetMultiplier(name).."  |  "..(left>0 and ("มีของ "..left) or "ของหมด • รอเติม"))
+ end
+ stockInfo.Text=table.concat(stockRows,"\n")
+ end
+ marketInfo.Text="ร้านเติมใน "..math.ceil(MS.GetTimeUntilReset()).." วินาที\nสถานะซื้อ/ใส่สกิน: "..(status.Skins or "OFF")..(status.Shop and ("\n"..status.Shop) or "")
+ S.featureStatus.AutoEquip=X.autoEquip and "จัดนักเตะอัตโนมัติเปิดอยู่" or "จัดนักเตะอัตโนมัติปิดอยู่"
+ towerChoice.Text="Tower: "..X.towerName..(X.towerLatest and "  (Auto)" or "  ›")
+ for i,b in towerSlotButtons do local u=X.towerTeam[i] and D.GetData().PlayerUnits[X.towerTeam[i]] b.Text="ช่องทีม "..i..(u and (" • "..u.PlayerUnitName.." Lv."..(u.Level or 1)) or " • เลือกนักเตะ") end
+ towerInfo.Text=status.Tower or "เลือก Tower แล้วเปิด Auto Best Team"
+ eventInfo.Text=(status.Events or "").."\n"..(status.Obby or "")
+ local rows={}
+ for _,key in {"SpareStrikers","Polisher","Potions","Market","Skins","Training","Tower","Events"} do table.insert(rows,key..": "..(status[key] or "OFF / ยังไม่เริ่ม")) end
+ local rw=G.BlueFarmRewards if rw then table.insert(rows,"Rewards: "..tostring(rw.status)) end
+ eventInfo.Text=(status.Events or "").."\n"..(status.Obby or "").."\n"..(S.obbyStatus or "")
+ if ready("overviewLive",0.25) then
+ local home=plot() local total,units,boxes,empty=0,0,0,0
+ if home then for _,part in CS:GetTagged("DropperBasePart") do
+ if part:IsDescendantOf(home) and part:GetAttribute("Unlocked") then
+ total+=1 local kind=part:GetAttribute("Type")
+ if kind=="PlayerUnit" then units+=1 elseif kind=="Box" then boxes+=1 else empty+=1 end
+ end end end
+ local queued=0 for _,variants in D.GetData().Inventory.Boxes do for _,entry in variants do queued+=tonumber(entry.Amount) or 0 end end
+ S.baseSlots={total=total,strikers=units,lockers=boxes,empty=empty} S.queuedBoxes=queued S.waitingBoxes=boxes
+ stats.Text=string.format("BASE      %d / %d occupied   |   %d free\nTEAM      %d strikers   |   %d lockers\nQUEUE    %d inventory lockers   /   %d opened\nGROW     %d upgrades   /   %d swaps\nLUCK      %d purchases   |   errors %d",total-empty,total,empty,units,boxes,queued,S.opened,S.strikerUpgrades,S.baseSwaps,S.luckUpgrades,S.errors)
+ end
+ local rows={S.enabled and "RUNNING" or "PAUSED"}
+ local function current(name,enabled,value)
+ table.insert(rows,name..": "..(not enabled and "OFF" or not S.enabled and "PAUSED" or value or "ON • Waiting"))
+ end
+ current("Auto Equip Best",X.autoEquip,status.AutoEquip)
+ current("Striker Upgrade",X.strikerUpgrade,"ON • "..S.strikerUpgrades)
+ current("Base / Luck Upgrade",X.upgrades,"ON • "..S.gameUpgrades)
+ current("Conveyor Buy",config.autoBuy,S.buyStatus)
+ current("Best Locker",config.spawnBestLocker,S.lockerPlaceStatus)
+ current("SpareStrikers",X.sellSpareStrikers,status.SpareStrikers)
+ current("Locker Sales",config.autoSellLockers,S.lockerSale and S.lockerSale.status)
+ current("Fast Open",X.fastOpen,G.BlueFarmInstant and G.BlueFarmInstant.status)
+ current("Polisher",X.polisher,status.Polisher)
+ current("Potions",X.luckPotion or X.cashPotion or X.speedPotion or X.bluetooth,status.Potions)
+ current("Market",X.market,status.Market)
+ current("Skins",X.skinBuy or X.skinEquip,status.Skins)
+ current("Training",X.grade or X.trait,status.Training)
+ current("Tower",X.tower,status.Tower)
+ current("Map / Events",X.mapCollect or X.events,status.Events)
+ current("Auto Obby",X.autoObby,S.obbyStatus)
+ table.insert(rows,"Anti AFK: "..(X.antiAFK and "ON" or "OFF"))
+ local rw=G.BlueFarmRewards current("Rewards",X.rewards,rw and rw.status)
+ if S.lastError~="" then table.insert(rows,"Last error: "..S.lastError) end
+ detail.Text=table.concat(rows,"\n")
+ detail.Size=UDim2.new(1,-12,0,math.max(245,#rows*30))
+ end)
+ if not ok then S.lastError="UI: "..tostring(err) end
+ task.wait(0.5)
+ task.wait(0.1)
+ end
+ clearMarkers()
+end)
+end
+
+-- Auto Rewards: Index, Playtime, Daily Login and Offline Earnings.
+do
+local env=getgenv()
+if env.BlueFarmRewards then
+ env.BlueFarmRewards.running=false
+ if env.BlueFarmRewards.connections then
+ for _,c in env.BlueFarmRewards.connections do c:Disconnect() end
+ end
+end
+local state={running=true,claimed=0,indexTokens=0,dailyClaims=0,offlineCash=0,connections={},status="Checking rewards"}
+env.BlueFarmRewards=state
+local rs=game:GetService("ReplicatedStorage")
+local p=game.Players.LocalPlayer
+local remotes=rs.Remotes
+local data=require(rs.Client.Data.ClientDataManager)
+local play=require(rs.Shared.Services.PlaytimeRewardsService)
+local rewards=require(rs.Shared.Core.Storage.Game.PlaytimeRewardsLibrary)
+local index=require(rs.Shared.Services.IndexRewardsService)
+local daily=require(rs.Shared.Services.DailyLoginService)
+local nextTry={}
+local offlinePending=true
+table.insert(state.connections,remotes.ShowOfflineEarnings.OnClientEvent:Connect(function(payload)
+ if state.running and type(payload)=="table" and (payload.Cash or 0)>0 then offlinePending=true end
+end))
+table.insert(state.connections,remotes.OfflineEarningsClaimed.OnClientEvent:Connect(function(amount)
+ if state.running then
+ state.offlineCash+=tonumber(amount) or 0
+ state.status="Offline earnings confirmed"
+ end
+end))
+local function due(name,delay)
+ local now=os.clock()
+ if now<(nextTry[name] or 0) then return false end
+ nextTry[name]=now+delay
+ return true
+end
+local function owned(reward)
+ local d=data.GetData()
+ if reward.Type=="Box" then
+ local variants=d.Inventory.Boxes[reward.BoxName]
+ local entry=variants and variants[reward.VariantName or "Normal"]
+ return entry and entry.Amount or 0
+ elseif reward.Type=="Item" then
+ return tonumber(d.Tokens[reward.ItemName]) or tonumber(d.Potions[reward.ItemName]) or 0
+ end
+ return nil
+end
+local function waitFor(predicate)
+ local deadline=os.clock()+1.5
+ repeat task.wait(0.05) until not state.running or predicate() or os.clock()>=deadline
+ return predicate()
+end
+task.spawn(function()
+ while state.running and S.running and gui.Parent do
+ local farm=env.BlueFarm
+ if X.rewards and farm and farm.running and farm.enabled then
+ local ok,err=pcall(function()
+ if offlinePending and due("offline",5) then
+ offlinePending=false
+ remotes.ClaimOfflineEarnings:FireServer()
+ end
+ if index.HasAnyClaimable() and due("index",15) then
+ local token=index.GetRewardTokenName()
+ local before=data.GetData().Tokens[token] or 0
+ remotes.ClaimAllIndexRewards:FireServer()
+ if waitFor(function()return (data.GetData().Tokens[token] or 0)>before end) then
+ local gained=(data.GetData().Tokens[token] or 0)-before
+ state.indexTokens+=gained
+ state.status="Index rewards confirmed: +"..gained.." "..token
+ end
+ end
+ if daily.CanClaim(p) and due("daily",30) then
+ local before=data.GetData().DailyRewards.DayIndex or 0
+ remotes.ClaimDailyReward:FireServer()
+ if waitFor(function() return (data.GetData().DailyRewards.DayIndex or 0)>before end) then
+ state.dailyClaims+=1 state.status="Daily login confirmed"
+ end
+ end
+ for i,entry in rewards.Rewards do
+ if not state.running then break end
+ if play.CanClaim(p,i) and due("play:"..i,30) then
+ local reward=entry.Rewards[1]
+ local before=owned(reward)
+ if before~=nil then
+ remotes.ClaimPlaytimeReward:FireServer(i)
+ if waitFor(function()return (owned(reward) or 0)>before end) then
+ play.MarkClaimed(p,i)
+ state.claimed+=1
+ state.status="Playtime reward "..i.." confirmed"
+ end
+ end
+ end
+ end
+ state.dailyWait=daily.GetTimeUntilNextClaim(p)
+ end)
+ if not ok then state.lastError=tostring(err) end
+ end
+ task.wait(0.25)
+ end
+ for _,c in state.connections do c:Disconnect() end
+end)
+end
+
+-- Fast locker opening: respect server timers, skip the local reveal animation.
+do
+local env=getgenv()
+if env.BlueFarmInstant then env.BlueFarmInstant.running=false end
+local state={running=true,opened=0,errors=0,skipAnimation=true,status="Waiting for server-ready lockers"}
+env.BlueFarmInstant=state
+local rs=game:GetService("ReplicatedStorage")
+local player=game.Players.LocalPlayer
+local collection=game:GetService("CollectionService")
+local boxService=require(rs.Shared.Services.BoxService)
+local handlerClass=require(rs.Client.Core.Classes.DropperBoxHandler)
+env.BlueFarmOriginalPlacement=env.BlueFarmOriginalPlacement or handlerClass._initAnimation
+handlerClass._initAnimation=function(self,...)
+ local current=env.BlueFarmInstant
+ if current and current.running and current.skipAnimation and S.running and S.enabled and X.fastOpen then
+ if self.BoxModel then
+ self.BoxModel:ScaleTo(1)
+ self.BoxModel:PivotTo(self.Attachments.Top.WorldCFrame)
+ end
+ return false
+ end
+ return env.BlueFarmOriginalPlacement(self,...)
+end
+env.BlueFarmOriginalReveal=env.BlueFarmOriginalReveal or handlerClass._playOpenAnimation
+handlerClass._playOpenAnimation=function(self,...)
+ local current=env.BlueFarmInstant
+ if current and current.running and current.skipAnimation and S.running and S.enabled and X.fastOpen then
+ self.Maid.OpenLocker=nil
+ self.Maid.OpenCharacter=nil
+ self:_finishOpenAnimation()
+ else return env.BlueFarmOriginalReveal(self,...) end
+end
+task.spawn(function()
+ local cache={}
+ local refreshed=0
+ local inFlight=setmetatable({},{__mode="k"})
+ while state.running and S.running and gui.Parent do
+ local farm=env.BlueFarm
+ if X.fastOpen and farm and farm.running and farm.enabled then
+ local ok,err=pcall(function()
+ local plot=workspace.Map.PlotModels:FindFirstChild(player.Name)
+ if not plot then return end
+ if os.clock()-refreshed>=1 then
+ refreshed=os.clock()
+ cache={}
+ for _,handler in filtergc("table",{Keys={"Part","Attachments","Callbacks"}},false) do
+ if typeof(handler.Part)=="Instance" and handler.Part:IsDescendantOf(plot) and type(handler.OpenBox)=="function" and not handler._destroyed then
+ cache[handler.Part]=handler
+ end end
+ end
+ for part,handler in cache do
+ if part.Parent and part:GetAttribute("Type")=="Box" and not handler._destroyed and not handler._opening and not inFlight[handler] then
+ if boxService.IsBoxReady(part:GetAttribute("BoxName"),part:GetAttribute("PlacedAt"),part:GetAttribute("Variant")) then
+ inFlight[handler]=true
+ task.spawn(function()
+ local success,openError=pcall(function() handler:OpenBox() end)
+ if success then
+ if part:GetAttribute("Type")~="Box" then state.opened+=1 S.opened+=1 state.status="Opened ready locker without reveal animation" end
+ else state.errors+=1 state.lastError=tostring(openError) end
+ inFlight[handler]=nil
+ end)
+ end end
+ end
+ end)
+ if not ok then state.errors+=1 state.lastError=tostring(err) end
+ end
+ task.wait(0.05)
+ end
+end)
+end
+
+
+end,function(err) return debug.traceback(tostring(err),2) end)
+if bootOK then bootGui:Destroy() else
+ bootText.Text="BLUE FARM • Startup failed\n"..string.sub(tostring(bootError),1,450)
+ bootText.TextColor3=Color3.fromRGB(255,130,130)
+ warn("BlueFarm startup: "..tostring(bootError))
+ getgenv().BlueFarmStartupError=tostring(bootError)
+end
