@@ -1,30 +1,30 @@
--- ==========================================
--- PandaAuth Loader Script
--- ==========================================
+-- =========================================================
+-- [ส่วนที่ 1] แปะโค้ด PandaAuth ไว้ด้านบนสุดของไฟล์ฟาร์มของคุณ
+-- =========================================================
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 
-local ServiceID = "bluelockfarm" -- Service ID ของคุณบน Panda Dashboard
-local MainScriptURL = "https://raw.githubusercontent.com/YOUR_USER/YOUR_REPO/main/obfuscated_script.lua" -- ลิงก์สคริปต์ตัวเต็ม (ที่ Obfuscate แล้ว)
-
--- ฟังก์ชันสำหรับเตะผู้เล่นออกจากเกม
-local function KickUser(reason)
-    LocalPlayer:Kick("\n\n[Blue Lock Farm - Security]\n" .. reason .. "\n")
-end
-
--- ดึง SDK ของ PandaAuth V3
+-- ดึงระบบตรวจ Key ของ PandaAuth มาทำงาน
 local PandaAuth = loadstring(game:HttpGet("https://pandauth.com/api/v2/sdk.lua"))()
 
--- -------------------------------------------------------------
--- กรณีที่ 1: กำหนด Key ผ่านตัวแปร (สำหรับลูกค้าเอาไปใส่หัวสคริปต์ก่อนรัน)
--- -------------------------------------------------------------
--- ลูกค้าจะใส่ Key บรรทัดนี้ เช่น: _G.Key = "PANDA-KEY-XXXXX"
-local clientKey = _G.Key or ""
+-- ตรวจสอบ Key ที่ส่งมาจากตัวแปร _G.Key
+local isValid, message = PandaAuth:ValidateKey("bluelockfarm", _G.Key or "")
 
-if clientKey == "" or clientKey == nil then
-    KickUser("ไม่พบ Key กรุณาระบุ Key ในสคริปต์ก่อนกดรัน (_G.Key = 'YOUR_KEY')")
-    return
+-- ถ้า Key ไม่ถูก หรือไม่ได้ใส่ Key ให้สั่งเตะออกจากเกมทันที
+if not isValid then
+    LocalPlayer:Kick("\n\n[Security] Key ไม่ถูกต้อง หรือไม่ได้ใส่ Key: " .. tostring(message))
+    return -- หยุดการทำงาน ไม่ให้โค้ดข้างล่างรัน
 end
+
+print("[PandaAuth] ตรวจสอบสิทธิ์ผ่าน ยินดีต้อนรับ!")
+
+-- =========================================================
+-- [ส่วนที่ 2] โค้ดสคริปต์ฟาร์ม Blue Lock ของคุณ (เอามาวางต่อท้ายตรงนี้)
+-- =========================================================
+-- ตัวอย่างโค้ดฟาร์มของคุณ:
+-- while task.wait(1) do
+--     print("กำลังฟาร์ม Blue Lock...")
+-- end
 
 -- ทำการตรวจสอบ Key กับเซิร์ฟเวอร์ Panda
 print("[PandaAuth] กำลังตรวจสอบ Key...")
