@@ -1,3 +1,49 @@
+-- =========================================================
+-- Panda Auth - PUSL-V4 (สำหรับสคริปต์ขาย + ระบบเตะออกจากเกม)
+-- =========================================================
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+
+-- ฟังก์ชันสำหรับเตะผู้เล่น
+local function KickUser(reason)
+    LocalPlayer:Kick("\n\n[Blue Lock Farm - Security]\n" .. reason .. "\n")
+end
+
+-- 1. โหลด Library ตัวใหม่ล่าสุด (PUSL-V4)
+local PUSL = loadstring(game:HttpGet("https://secure.pandauth.com/pv4/lib"))()
+if not PUSL or type(PUSL.configure) ~= "function" then
+    return warn("[Panda] Library failed to initialize.")
+end
+
+-- 2. กำหนด Service ID ของคุณ
+PUSL.configure({
+    serviceId = "bluelockfarm",
+})
+
+-- 3. รับ Key จากตัวแปรที่ลูกค้ากำหนดไว้หัวสคริปต์
+local key = _G.Key or ""
+
+if key == "" then
+    KickUser("ไม่พบ Key กรุณาระบุ Key ก่อนกดรัน (_G.Key = 'YOUR_KEY')")
+    return
+end
+
+-- 4. ส่ง Key ไปตรวจสอบสิทธิ์
+local result = PUSL.validate(key)
+
+if not result.success then
+    -- หาก Key ผิด, หมดอายุ, หรือ HWID ไม่ตรง จะเตะออกจากเกมทันที
+    KickUser("Key ไม่ถูกต้อง หรือหมดอายุแล้ว!")
+    return
+end
+
+print("[Panda] Authenticated. Premium:", result.isPremium)
+
+-- =========================================================
+-- โค้ดสคริปต์ฟาร์ม Blue Lock ของคุณวางต่อตั้งแต่บรรทัดนี้ลงไป
+-- =========================================================
+print("โหลดสคริปต์ฟาร์มสำเร็จ กำลังเริ่มทำงาน...")
+
 -- BLUE LOCK FARM | by.Fyrelith | DEFAULT SETTINGS
 -- Starts with the current user baseline; automatically loads and saves its own Config.
 -- BLUE FARM startup status: remains visible if initialization fails.
