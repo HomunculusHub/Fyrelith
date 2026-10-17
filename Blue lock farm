@@ -1,5 +1,5 @@
--- BLUE LOCK FARM | by.Fyrelith
--- discord.gg/kgbFFGWHwr
+-- BLUE LOCK FARM | by.Fyrelith | DEFAULT SETTINGS
+-- Starts with the current user baseline; automatically loads and saves its own Config.
 -- BLUE FARM startup status: remains visible if initialization fails.
 local bootPlayer=game:GetService("Players").LocalPlayer
 while not bootPlayer do task.wait() bootPlayer=game:GetService("Players").LocalPlayer end
@@ -20,19 +20,19 @@ if G.AutoBuyConveyor then G.AutoBuyConveyor.running=false end
 local previousFarm=G.BlueFarm
 if previousFarm and type(previousFarm.saveConfig)=="function" then pcall(previousFarm.saveConfig) end
 if G.BlueFarm then G.BlueFarm.running=false end
-local S={version="dashboard-64-training-tp",running=true,enabled=true,cycles=0,opened=0,bought=0,sold=0,errors=0,lastError="",strikerUpgrades=0,luckUpgrades=0,placed=0,waitingBoxes=0,baseSwaps=0,gameUpgrades=0}
+local S={version="dashboard-67-personal-defaults",running=true,enabled=true,cycles=0,opened=0,bought=0,sold=0,errors=0,lastError="",strikerUpgrades=0,luckUpgrades=0,placed=0,waitingBoxes=0,baseSwaps=0,gameUpgrades=0}
 G.BlueFarm=S
 G.BlueFarmSellOnce=G.BlueFarmSellOnce or {sent=false,done=false,status="Waiting for a spare striker"}
 S.sellOnce=G.BlueFarmSellOnce
 G.BlueFarmSpareSale=G.BlueFarmSpareSale or {sent={},sold=0,status="Checking spare strikers"}
-G.BlueFarmConveyor=G.BlueFarmConveyor or {autoBuy=true,spawnBestLocker=true,warnings=true,variantFilter=false,variants={},boxes={}}
+G.BlueFarmConveyor={autoBuy=false,spawnBestLocker=false,warnings=true,variantFilter=false,variants={},boxes={}}
 local config=G.BlueFarmConveyor
-if config.autoBuy==nil then config.autoBuy=true end
+if config.autoBuy==nil then config.autoBuy=false end
 if config.spawnBestLocker==nil then config.spawnBestLocker=config.autoSpawn~=false end
 S.conveyor=config
 config.keepLockers=10
 config.openLockers=5
-if config.autoSellLockers==nil then config.autoSellLockers=true end
+config.autoSellLockers=false
 G.BlueFarmLockerSale=G.BlueFarmLockerSale or {sold=0}
 S.lockerSale=G.BlueFarmLockerSale
 local RS=game:GetService("ReplicatedStorage")
@@ -55,34 +55,34 @@ local UL=require(RS.Shared.Core.Storage.Game.UpgradesLibrary)
 local BL=require(RS.Shared.Core.Storage.Game.BoxesLibrary)
 local US=require(RS.Shared.Services.UpgradesService)
 local C=require(RS.Client.Core.ConveyorRollClient)
-local X={sellSpareStrikers=true,polisher=false,luckPotion=false,cashPotion=false,speedPotion=false,bluetooth=false,market=false,skinBuy=true,skinEquip=false,grade=false,trait=false,tower=false,events=false,obby=false,esp=false,upgrades=true,rewards=true,fastOpen=true,rollLimit=20,gradeTarget=3,traitTarget=1.5,spendPercent=10,reserveCash=0,towerName="Entrance"}
+local X={sellSpareStrikers=false,polisher=false,luckPotion=false,cashPotion=false,speedPotion=false,bluetooth=false,market=false,skinBuy=false,skinEquip=false,grade=false,trait=false,tower=false,events=false,obby=false,esp=false,upgrades=false,rewards=false,fastOpen=false,rollLimit=20,gradeTarget=3,traitTarget=1.5,spendPercent=10,reserveCash=0,towerName="FirstSelection"}
 S.options=X
 X.noRollLimit=false
 X.antiAFK=true
-X.autoObby=true
-X.strikerUpgrade=true
+X.autoObby=false
+X.strikerUpgrade=false
 X.uiKey="RightShift"
 X.themeR=0 X.themeG=207 X.themeB=224
 X.showIcon=true
-X.trainingTP=true
+X.trainingTP=false
 X.gradeCash=false
-X.mapCollect=true
-X.events=true
-X.collectWalk=true
+X.mapCollect=false
+X.events=false
+X.collectWalk=false
 X.collectMode="Tween"
 X.collectTweenSpeed=600
 X.fastTweenConfigured=false
 X.collectTPDelay=0.5
-X.autoEquip=true
-X.fullMarketBalance=true
-X.towerBest=true
-X.towerLatest=true
+X.autoEquip=false
+X.fullMarketBalance=false
+X.towerBest=false
+X.towerLatest=false
 X.towerTeam={}
-X.gradeTargets={S=true,SS=true,X=true,EX=true,UR=true}
-X.traitTargets={FortuneIII=true}
+X.gradeTargets={}
+X.traitTargets={}
 X.bluetooth=true
 X.speedPotion=true
-if previousFarm and previousFarm.options then
+if false then -- Default edition: do not inherit previous runtime options
  for key,value in previousFarm.options do X[key]=type(value)=="table" and table.clone(value) or value end
  S.enabled=previousFarm.enabled~=false
 end
@@ -91,13 +91,14 @@ X.bluetooth=false
 X.speedPotion=false
 -- Persist only settings; never load executable code or runtime sale/collection state.
 local http=game:GetService("HttpService")
-local configPath="BlueFarm_Config_"..tostring(game.PlaceId).."_"..tostring(P.UserId)..".json"
+local configPath="BlueFarm_Config_"..tostring(game.PlaceId).."_"..tostring(P.UserId).."_Default.json"
 local configState={file=configPath,loaded=false,saves=0,status="Config: starting",lastError=""}
 S.config=configState
 local configBounds={rollLimit={1,500},spendPercent={1,100},reserveCash={0,1e18},collectTweenSpeed={5,2000},collectTPDelay={0.2,10},gradeTarget={1,14},traitTarget={1,3}}
 local optionKinds={}
 for key,value in X do optionKinds[key]=type(value) end
 optionKinds.unit="string"
+G.BlueFarmLanguage="en"
 local loadedUI
 local function validNumber(n) return type(n)=="number" and n==n and math.abs(n)<math.huge end
 local function validEnvelope(value)
@@ -589,6 +590,7 @@ local thaiChoice=action(langues,"ไทย",function() setLanguage("th") end) th
 local englishChoice=action(langues,"English",function() setLanguage("en") end) englishChoice.Name="English"
 local languageStatus=label(langues,"ภาษาปัจจุบัน: ไทย",32) languageStatus.Name="CurrentLanguage"
 local configInfo=label(langues,"",85) configInfo.Name="ConfigStatus"
+action(langues,"Save Config",function() if S.saveConfig then S.saveConfig() end end)
 local bindingKey=false
 local keyButton=action(langues,"UI Key: "..X.uiKey,function() bindingKey=true end)
 keyButton.Name="BindUIKey"
