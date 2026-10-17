@@ -1,3 +1,51 @@
+-- ==========================================
+-- PandaAuth Loader Script
+-- ==========================================
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+
+local ServiceID = "bluelockfarm" -- Service ID ของคุณบน Panda Dashboard
+local MainScriptURL = "https://raw.githubusercontent.com/YOUR_USER/YOUR_REPO/main/obfuscated_script.lua" -- ลิงก์สคริปต์ตัวเต็ม (ที่ Obfuscate แล้ว)
+
+-- ฟังก์ชันสำหรับเตะผู้เล่นออกจากเกม
+local function KickUser(reason)
+    LocalPlayer:Kick("\n\n[Blue Lock Farm - Security]\n" .. reason .. "\n")
+end
+
+-- ดึง SDK ของ PandaAuth V3
+local PandaAuth = loadstring(game:HttpGet("https://pandauth.com/api/v2/sdk.lua"))()
+
+-- -------------------------------------------------------------
+-- กรณีที่ 1: กำหนด Key ผ่านตัวแปร (สำหรับลูกค้าเอาไปใส่หัวสคริปต์ก่อนรัน)
+-- -------------------------------------------------------------
+-- ลูกค้าจะใส่ Key บรรทัดนี้ เช่น: _G.Key = "PANDA-KEY-XXXXX"
+local clientKey = _G.Key or ""
+
+if clientKey == "" or clientKey == nil then
+    KickUser("ไม่พบ Key กรุณาระบุ Key ในสคริปต์ก่อนกดรัน (_G.Key = 'YOUR_KEY')")
+    return
+end
+
+-- ทำการตรวจสอบ Key กับเซิร์ฟเวอร์ Panda
+print("[PandaAuth] กำลังตรวจสอบ Key...")
+local isValid, message = PandaAuth:ValidateKey(ServiceID, clientKey)
+
+if isValid == true then
+    print("[PandaAuth] ตรวจสอบสำเร็จ กำลังโหลดสคริปต์หลัก...")
+    
+    -- โหลดสคริปต์ฟาร์มตัวจริงมารันบน Memory
+    local success, err = pcall(function()
+        loadstring(game:HttpGet(MainScriptURL))()
+    end)
+    
+    if not success then
+        warn("เกิดข้อผิดพลาดในการโหลดสคริปต์: " .. tostring(err))
+    end
+else
+    -- ถ้า Key ผิด, หมดอายุ, หรือ HWID ไม่ตรง ให้เตะออกจากเซิร์ฟเวอร์ทันที
+    KickUser("Key ไม่ถูกต้อง หรือหมดอายุแล้ว: " .. tostring(message))
+end
+
 -- BLUE LOCK FARM | by.Fyrelith | DEFAULT SETTINGS
 -- Starts with the current user baseline; automatically loads and saves its own Config.
 -- BLUE FARM startup status: remains visible if initialization fails.
