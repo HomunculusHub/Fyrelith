@@ -1,4 +1,3 @@
--- BLUE FARM ALL-IN-ONE | by.Xepz
 -- BLUE LOCK FARM | by.Fyrelith
 -- discord.gg/kgbFFGWHwr
 -- BLUE FARM startup status: remains visible if initialization fails.
@@ -21,7 +20,6 @@ if G.AutoBuyConveyor then G.AutoBuyConveyor.running=false end
 local previousFarm=G.BlueFarm
 if previousFarm and type(previousFarm.saveConfig)=="function" then pcall(previousFarm.saveConfig) end
 if G.BlueFarm then G.BlueFarm.running=false end
-local S={version="dashboard-31-training-return",running=true,enabled=true,cycles=0,opened=0,bought=0,sold=0,errors=0,lastError="",strikerUpgrades=0,luckUpgrades=0,placed=0,waitingBoxes=0,baseSwaps=0,gameUpgrades=0}
 local S={version="dashboard-64-training-tp",running=true,enabled=true,cycles=0,opened=0,bought=0,sold=0,errors=0,lastError="",strikerUpgrades=0,luckUpgrades=0,placed=0,waitingBoxes=0,baseSwaps=0,gameUpgrades=0}
 G.BlueFarm=S
 G.BlueFarmSellOnce=G.BlueFarmSellOnce or {sent=false,done=false,status="Waiting for a spare striker"}
@@ -72,7 +70,6 @@ X.mapCollect=true
 X.events=true
 X.collectWalk=true
 X.collectMode="Tween"
-X.collectTweenSpeed=60
 X.collectTweenSpeed=600
 X.fastTweenConfigured=false
 X.collectTPDelay=0.5
@@ -97,7 +94,6 @@ local http=game:GetService("HttpService")
 local configPath="BlueFarm_Config_"..tostring(game.PlaceId).."_"..tostring(P.UserId)..".json"
 local configState={file=configPath,loaded=false,saves=0,status="Config: starting",lastError=""}
 S.config=configState
-local configBounds={rollLimit={1,500},spendPercent={1,100},reserveCash={0,1e18},collectTweenSpeed={5,500},collectTPDelay={0.2,10},gradeTarget={1,14},traitTarget={1,3}}
 local configBounds={rollLimit={1,500},spendPercent={1,100},reserveCash={0,1e18},collectTweenSpeed={5,2000},collectTPDelay={0.2,10},gradeTarget={1,14},traitTarget={1,3}}
 local optionKinds={}
 for key,value in X do optionKinds[key]=type(value) end
@@ -176,13 +172,10 @@ local old=P.PlayerGui:FindFirstChild("BlueFarmControls") if old then old:Destroy
 local gui=Instance.new("ScreenGui") gui.Name="BlueFarmControls" gui.ResetOnSpawn=false gui.DisplayOrder=80 gui.ZIndexBehavior=Enum.ZIndexBehavior.Sibling gui.Parent=P.PlayerGui
 local UIS=game:GetService("UserInputService")
 local connections={}
-local blue=Color3.fromRGB(47,170,255)
 local blue=Color3.fromRGB(0,207,224)
 -- Keep source strings separate from rendered text so live statuses can be translated.
 local language=G.BlueFarmLanguage=="en" and "en" or "th"
 local localeRows={
- {"ไม่มี Bluetooth Potion → TP ไปสุ่มแล้วกลับ",nil,"No Bluetooth Potion → TP to roll and return"},
- {"เปิดเมื่อไม่มีบัฟและไม่มี Bluetooth Potion • รอผลสุ่มแล้วกลับจุดเดิม",nil,"Without an active buff or Bluetooth Potion: teleport to the station, roll, then return"},
  {"Auto Upgrade Striker • อัพเวลนักเตะ",nil,"Auto Upgrade Striker • Level up Strikers"},
  {"อัปเกรดนักเตะใน Base ทุกตัวที่เงินพอ • แยกจาก Base / Luck",nil,"Upgrade affordable Strikers in your base; separate from Base / Luck upgrades"},
  {"TP รับโบนัสที่พร้อม แล้วกลับบ้านอัตโนมัติ • รอคูลดาวน์",nil,"TP to ready bonuses, return home automatically, then wait for cooldown"},
@@ -220,7 +213,6 @@ local localeRows={
  {"Config: session only","Executor เขียนไฟล์ไม่ได้ • จำค่าเฉพาะรอบนี้","File writing unavailable; settings kept for this session only"},
  {"Config: save failed","บันทึกไฟล์ไม่สำเร็จ","Could not save settings file"},
  {"อยู่นอกระยะสถานีสุ่ม",nil,"Out of range of the rolling station"},
- {"การสุ่มต้องอยู่ในระยะสถานี หรือมี Bluetooth ที่ใช้งานอยู่\nสคริปต์ไม่ย้ายตัวละครไปสุ่ม",nil,"Rolling requires station range or an active Bluetooth buff.\nThe script does not move your character to roll."},
  {"เปิด TP ไปสุ่มแล้วกลับ เพื่อสุ่มจากนอกระยะ\nระบบรอผลสุ่มแล้วกลับจุดเดิม",nil,"Enable TP to roll and return when outside station range.\nWaits for the roll result, then returns to the starting point."},
  {"ใส่ Best Skin ตามอันดับนักเตะ",nil,"Auto equip best skins by Striker rank"},
  {"สกินดีที่สุดให้นักเตะ Base สูงสุดก่อน แล้วไล่ลงมา • ไม่ลดระดับสกิน",nil,"Best skins go to the highest-base Strikers first, then down the team; never downgrades"},
@@ -447,7 +439,6 @@ S.setLanguage=setLanguage
 local pageColumns={}
 local themeTargets=setmetatable({},{__mode="k"})
 local function make(class,parent,props)
- local o=Instance.new(class) for k,v in props do o[k]=v end o.Parent=parent bindLanguage(o) return o
  local columns=pageColumns[parent]
  if columns and (class=="TextLabel" or class=="TextButton" or class=="Frame") then
  local index=columns.count==1 and 1 or (columns.heights[1]<=columns.heights[2] and 1 or 2)
@@ -461,7 +452,6 @@ local function make(class,parent,props)
  end
  end o.Parent=parent bindLanguage(o) return o
 end
-local function round(o,r) make("UICorner",o,{CornerRadius=UDim.new(0,r or 8)}) end
 local function round(o,r)
  make("UICorner",o,{CornerRadius=UDim.new(0,r or 8)})
  if o:IsA("TextButton") then
@@ -478,8 +468,6 @@ end
 local function label(parent,text,height)
  return make("TextLabel",parent,{Size=UDim2.new(1,-12,0,height or 28),BackgroundTransparency=1,Text=text,TextColor3=Color3.fromRGB(209,222,238),Font=Enum.Font.Gotham,TextSize=13,TextWrapped=true,TextXAlignment=Enum.TextXAlignment.Left,TextYAlignment=Enum.TextYAlignment.Center})
 end
-local panel=make("Frame",gui,{Name="Dashboard",Size=UDim2.fromOffset(680,590),Position=UDim2.fromOffset(24,48),BackgroundColor3=Color3.fromRGB(8,12,19),BorderSizePixel=0}) round(panel,12)
-make("UIStroke",panel,{Color=blue,Thickness=2})
 local panel=make("Frame",gui,{Name="Dashboard",Size=UDim2.fromOffset(900,620),Position=UDim2.fromOffset(24,48),BackgroundColor3=Color3.fromRGB(24,25,29),BorderSizePixel=0}) round(panel,8)
 make("UIStroke",panel,{Color=Color3.fromRGB(68,91,103),Thickness=1})
 do
@@ -497,15 +485,11 @@ local sidebarGradient=make("UIGradient",sidebar,{Color=ColorSequence.new(Color3.
 local brand=label(sidebar,"◈  Fyrelith",50) brand.Position=UDim2.fromOffset(12,4) brand.Font=Enum.Font.GothamBold brand.TextColor3=blue brand.TextSize=23
 local sideFooter=label(sidebar,"by.Fyrelith\ndiscord.gg/kgbFFGWHwr",50) sideFooter.Position=UDim2.new(0,14,1,-59) sideFooter.TextSize=10
 local scale=make("UIScale",panel,{Scale=1})
-local header=label(panel,"BLUE FARM  /  CONTROL CENTER",38) header.Name="DragHeader" header.Position=UDim2.fromOffset(18,4) header.Size=UDim2.fromOffset(565,38) header.TextColor3=blue header.Font=Enum.Font.GothamBold header.TextSize=17 header.Active=true
 local header=label(panel,"BLUE LOCK FARM  /  discord.gg/kgbFFGWHwr",38) header.Name="DragHeader" header.Position=UDim2.fromOffset(175,4) header.Size=UDim2.fromOffset(565,38) header.TextColor3=blue header.Font=Enum.Font.GothamBold header.TextSize=17 header.Active=true
 local mini=make("TextButton",panel,{Name="Minimize",Position=UDim2.new(1,-45,0,8),Size=UDim2.fromOffset(32,28),Text="−",TextSize=20,BackgroundColor3=Color3.fromRGB(25,40,58),TextColor3=blue,BorderSizePixel=0}) round(mini)
-local credit=make("TextLabel",panel,{Name="AuthorCredit",Position=UDim2.new(1,-125,0,8),Size=UDim2.fromOffset(70,28),BackgroundTransparency=1,Text="by.Xepz",TextSize=12,Font=Enum.Font.GothamMedium,TextColor3=blue,TextXAlignment=Enum.TextXAlignment.Right})
-local button=make("TextButton",panel,{Name="Toggle",Position=UDim2.fromOffset(18,48),Size=UDim2.new(1,-36,0,34),BackgroundColor3=Color3.fromRGB(15,72,110),TextColor3=Color3.fromRGB(175,230,255),Font=Enum.Font.GothamBold,TextSize=13,BorderSizePixel=0}) round(button)
 local credit=make("TextLabel",panel,{Name="AuthorCredit",Position=UDim2.new(1,-145,0,8),Size=UDim2.fromOffset(90,28),BackgroundTransparency=1,Text="by.Fyrelith",TextSize=12,Font=Enum.Font.GothamMedium,TextColor3=blue,TextXAlignment=Enum.TextXAlignment.Right})
 local button=make("TextButton",panel,{Name="Toggle",Position=UDim2.fromOffset(175,48),Size=UDim2.new(1,-187,0,34),BackgroundColor3=Color3.fromRGB(15,72,110),TextColor3=Color3.fromRGB(175,230,255),Font=Enum.Font.GothamBold,TextSize=13,BorderSizePixel=0}) round(button)
 button.Activated:Connect(function() S.enabled=not S.enabled end)
-local nav=make("Frame",panel,{Name="Navigation",Position=UDim2.fromOffset(18,96),Size=UDim2.fromOffset(133,446),BackgroundTransparency=1})
 local nav=make("Frame",panel,{Name="Navigation",Position=UDim2.fromOffset(9,88),Size=UDim2.fromOffset(145,446),BackgroundTransparency=1})
 make("UIListLayout",nav,{Padding=UDim.new(0,7),SortOrder=Enum.SortOrder.LayoutOrder})
 local pages={} local tabs={} local pageRefresh={}
@@ -547,8 +531,6 @@ local function refreshNavigationTheme()
 end
 S.refreshNavigationTheme=refreshNavigationTheme
 local function page(name,title)
- local sc=make("ScrollingFrame",panel,{Name=name,Position=UDim2.fromOffset(165,96),Size=UDim2.new(1,-183,0,446),BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=4,ScrollBarImageColor3=blue,CanvasSize=UDim2.new(),AutomaticCanvasSize=Enum.AutomaticSize.Y,Visible=false})
- make("UIListLayout",sc,{Padding=UDim.new(0,8),SortOrder=Enum.SortOrder.LayoutOrder})
  local sc=make("ScrollingFrame",panel,{Name=name,Position=UDim2.fromOffset(175,96),Size=UDim2.new(1,-187,0,474),BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=3,ScrollBarImageColor3=blue,CanvasSize=UDim2.new(),AutomaticCanvasSize=Enum.AutomaticSize.Y,Visible=false})
  make("UIListLayout",sc,{Padding=UDim.new(0,10),FillDirection=Enum.FillDirection.Horizontal,VerticalAlignment=Enum.VerticalAlignment.Top,SortOrder=Enum.SortOrder.LayoutOrder})
  make("UIPadding",sc,{PaddingBottom=UDim.new(0,12),PaddingRight=UDim.new(0,8)})
@@ -563,10 +545,8 @@ local function page(name,title)
  columns[i]=column
  end
  pageColumns[sc]=columns
- local b=make("TextButton",nav,{Name=name,Size=UDim2.new(1,0,0,42),Text=title,Font=Enum.Font.GothamMedium,TextSize=12,TextColor3=Color3.fromRGB(180,198,220),BackgroundColor3=Color3.fromRGB(17,25,37),BorderSizePixel=0}) round(b)
  local b=make("TextButton",nav,{Name=name,Size=UDim2.new(1,0,0,42),Text=title,Font=Enum.Font.GothamMedium,TextSize=12,TextColor3=Color3.fromRGB(180,198,220),BackgroundColor3=Color3.fromRGB(55,65,77),BorderSizePixel=0}) round(b)
  pages[name]=sc tabs[name]=b
- b.Activated:Connect(function() for n,p in pages do p.Visible=n==name tabs[n].BackgroundColor3=n==name and Color3.fromRGB(17,65,100) or Color3.fromRGB(17,25,37) end end)
  b.Activated:Connect(function()switchPage(name)end)
  return sc
 end
@@ -577,20 +557,15 @@ local market=page("Market","ตลาด / Market")
 local training=page("Training","ฝึก / Training")
 local tower=page("Tower","ทีม / Tower")
 local events=page("Events","กิจกรรม / ESP")
-local langues=page("langues","langues")
-home.Visible=true tabs.Overview.BackgroundColor3=Color3.fromRGB(17,65,100)
 local langues=page("Setting","Setting")
 home.Visible=true refreshNavigationTheme()
 local function note(parent,text) return label(parent,text,52) end
 local function toggle(parent,key,title,description,owner)
  owner=owner or X
- local row=make("TextButton",parent,{Name=key,Size=UDim2.new(1,-6,0,68),BackgroundColor3=Color3.fromRGB(16,24,36),BorderSizePixel=0,Text="",AutoButtonColor=true}) round(row)
  local row=make("TextButton",parent,{Name=key,Size=UDim2.new(1,-6,0,68),BackgroundColor3=Color3.fromRGB(29,30,34),BorderSizePixel=0,Text="",AutoButtonColor=true}) round(row)
  local t=label(row,title,27) t.Position=UDim2.fromOffset(12,3) t.Size=UDim2.new(1,-88,0,27) t.Font=Enum.Font.GothamBold
  local d=label(row,description,29) d.Position=UDim2.fromOffset(12,32) d.Size=UDim2.new(1,-24,0,29) d.TextSize=11 d.TextColor3=Color3.fromRGB(139,158,183)
  d.Name="Description"
- local state=label(row,"",26) state.Position=UDim2.new(1,-66,0,5) state.Size=UDim2.fromOffset(58,26) state.Font=Enum.Font.GothamBold
- local function refresh() state.Text=owner[key] and "ON" or "OFF" state.TextColor3=owner[key] and Color3.fromRGB(72,220,165) or Color3.fromRGB(130,145,167) end
  local state=make("Frame",row,{Name="Switch",Position=UDim2.new(1,-48,0,9),Size=UDim2.fromOffset(34,18),BorderSizePixel=0}) round(state,9)
  local thumb=make("Frame",state,{Name="Thumb",Size=UDim2.fromOffset(12,12),Position=UDim2.fromOffset(3,3),BackgroundColor3=Color3.fromRGB(240,243,245),BorderSizePixel=0}) round(thumb,6)
  local function refresh() state.BackgroundColor3=owner[key] and blue or Color3.fromRGB(57,59,65) thumb.Position=UDim2.fromOffset(owner[key] and 19 or 3,3) end
@@ -598,17 +573,14 @@ local function toggle(parent,key,title,description,owner)
  return row
 end
 local function field(parent,key,title,min,max)
- local row=make("Frame",parent,{Size=UDim2.new(1,-6,0,44),BackgroundColor3=Color3.fromRGB(16,24,36),BorderSizePixel=0}) round(row)
  local row=make("Frame",parent,{Size=UDim2.new(1,-6,0,44),BackgroundColor3=Color3.fromRGB(29,30,34),BorderSizePixel=0}) round(row)
  local t=label(row,title,40) t.Position=UDim2.fromOffset(12,0) t.Size=UDim2.new(1,-122,0,40)
- local box=make("TextBox",row,{Name=key,Position=UDim2.new(1,-106,0,6),Size=UDim2.fromOffset(94,32),Text=tostring(X[key]),ClearTextOnFocus=false,BackgroundColor3=Color3.fromRGB(26,42,60),TextColor3=blue,Font=Enum.Font.Gotham,TextSize=13,BorderSizePixel=0}) round(box)
  local box=make("TextBox",row,{Name=key,Position=UDim2.new(1,-106,0,6),Size=UDim2.fromOffset(94,32),Text=tostring(X[key]),ClearTextOnFocus=false,BackgroundColor3=Color3.fromRGB(65,67,73),TextColor3=Color3.fromRGB(240,242,245),Font=Enum.Font.Gotham,TextSize=13,BorderSizePixel=0}) round(box)
  box.FocusLost:Connect(function() local n=tonumber(box.Text) if n and n==n and n<math.huge then X[key]=math.clamp(n,min,max) end box.Text=tostring(X[key]) end)
  table.insert(pageRefresh,function()if not box:IsFocused() then box.Text=tostring(X[key]) end end)
  return row
 end
 local function action(parent,name,callback)
- local b=make("TextButton",parent,{Size=UDim2.new(1,-6,0,38),Text=name,TextSize=12,Font=Enum.Font.GothamMedium,TextColor3=blue,BackgroundColor3=Color3.fromRGB(19,44,65),BorderSizePixel=0}) round(b) b.Activated:Connect(callback) return b
  local b=make("TextButton",parent,{Size=UDim2.new(1,-6,0,38),Text=name,TextSize=12,Font=Enum.Font.GothamMedium,TextColor3=Color3.fromRGB(245,255,255),BackgroundColor3=Color3.fromRGB(0,171,190),BorderSizePixel=0}) round(b) b.Activated:Connect(callback) return b
 end
 label(langues,"เลือกภาษา",32)
@@ -736,10 +708,6 @@ task.spawn(function()
  while S.running and gui.Parent do S.refreshMasterStatus() task.wait(0.05) end
 end)
 languageRefresh=function()
- thaiChoice.Text=(language=="th" and "✓  " or "").."ไทย"
- englishChoice.Text=(language=="en" and "✓  " or "").."English"
- thaiChoice.BackgroundColor3=language=="th" and Color3.fromRGB(17,65,100) or Color3.fromRGB(19,44,65)
- englishChoice.BackgroundColor3=language=="en" and Color3.fromRGB(17,65,100) or Color3.fromRGB(19,44,65)
  thaiChoice.Text="ไทย"
  englishChoice.Text="English"
  S.styleSelection(thaiChoice,language=="th")
@@ -767,8 +735,6 @@ local function choiceList(title,names,selected)
  local row=make("Frame",farm,{Size=UDim2.new(1,-6,0,math.ceil(#names/3)*30),BackgroundTransparency=1})
  for i,name in names do
  local b=make("TextButton",row,{Size=UDim2.new(1/3,-5,0,27),Position=UDim2.new((i-1)%3/3,0,0,math.floor((i-1)/3)*30),TextSize=10,Font=Enum.Font.Gotham,TextColor3=blue,BackgroundColor3=Color3.fromRGB(17,28,42),BorderSizePixel=0}) round(b,4)
- local function refresh() b.Text=(selected[name]~=false and "✓ " or "– ")..name b.TextColor3=selected[name]~=false and blue or Color3.fromRGB(100,112,130) end
- b.Activated:Connect(function() selected[name]=selected[name]==false refresh() end) refresh()
  themeTargets[b]=nil
  local function refresh()
  local enabled=selected[name]~=false
@@ -837,7 +803,6 @@ toggle(training,"noRollLimit","No Limit • ไม่จำกัดจำนว
 note(training,"ค่าจำนวนครั้งด้านล่างใช้เมื่อปิด No Limit เท่านั้น")
 field(training,"rollLimit","จำนวนสุ่มสูงสุด / ครั้งที่เปิด",1,500)
 toggle(training,"gradeCash","ใช้ Cash สำหรับ Grade","เปิด = ใช้เงินเกม • ปิด = ใช้ Grade Token • Trait ใช้ Token")
-toggle(training,"trainingTP","ไม่มี Bluetooth Potion → TP ไปสุ่มแล้วกลับ","เปิดเมื่อไม่มีบัฟและไม่มี Bluetooth Potion • รอผลสุ่มแล้วกลับจุดเดิม")
 toggle(training,"trainingTP","TP ไปสุ่มแล้วกลับ เมื่ออยู่นอกระยะ","ไม่มีบัฟระยะไกล: TP ไปสถานีแล้วกลับ • ไม่ใช้โพชั่นในกระเป๋า")
 local function targetGrid(title,names,key,display)
  label(training,title,30)
@@ -848,7 +813,6 @@ local function targetGrid(title,names,key,display)
  buttons[name]=b
  b.Activated:Connect(function() X[key][name]=not X[key][name] or nil end)
  end
- local function refresh() for name,b in buttons do b.BackgroundColor3=X[key][name] and Color3.fromRGB(18,86,119) or Color3.fromRGB(17,28,42) b.Text=(X[key][name] and "✓ " or "")..display(name) end end
  local function refresh() for name,b in buttons do S.styleSelection(b,X[key][name]) b.Text=display(name) end end
  table.insert(pageRefresh,refresh) refresh()
 end
@@ -857,7 +821,6 @@ targetGrid("Grade เป้าหมาย (F–UR)",{"F","E","D","C","B","A","S
 local traitService=require(RS.Shared.Services.TraitService)
 targetGrid("Trait เป้าหมาย (ชื่อจริงในเกม)",traitService.GetSortedTraitNames(),"traitTargets",function(name)return name end)
 note(training,"เลือกได้หลายรายการ • กดซ้ำเพื่อยกเลิก\nหยุดเมื่อได้รายการใดรายการหนึ่งที่เลือกไว้")
-note(training,"การสุ่มต้องอยู่ในระยะสถานี หรือมี Bluetooth ที่ใช้งานอยู่\nสคริปต์ไม่ย้ายตัวละครไปสุ่ม")
 note(training,"เปิด TP ไปสุ่มแล้วกลับ เพื่อสุ่มจากนอกระยะ\nระบบรอผลสุ่มแล้วกลับจุดเดิม")
 toggle(training,"grade","Auto Grade","หยุดเมื่อถึงตัวคูณเป้าหมาย / โทเคนหมด")
 toggle(training,"trait","Auto Trait","หยุดเมื่อได้ Trait ที่เลือก / โทเคนหมด")
@@ -872,15 +835,12 @@ towerChoice=action(tower,"Tower: Entrance  ›",function() X.towerLatest=false l
 toggle(tower,"towerBest","Auto Equip Best • ทีมหอคอย","เปิด = จัดทีมเก่งสุด • ปิด = ใช้นักเตะที่เลือกเองด้านล่าง")
 S.towerTeamGroup=make("Frame",tower,{Name="ManualTowerTeam",Size=UDim2.new(1,-6,0,0),AutomaticSize=Enum.AutomaticSize.Y,BackgroundTransparency=1})
 make("UIListLayout",S.towerTeamGroup,{Padding=UDim.new(0,8),SortOrder=Enum.SortOrder.LayoutOrder})
-note(tower,"เลือกนักเตะเอง: ปิด Auto Equip Best ก่อน")
 note(S.towerTeamGroup,"เลือกนักเตะเอง: ปิด Auto Equip Best ก่อน")
 local towerSlotButtons={}
 for i=1,require(RS.Shared.Constants).InfinityTowerUnitSlots do
- local slot=i local b=action(tower,"ช่องทีม "..i.." • เลือกนักเตะ",function()if S.pickTowerSlot then S.pickTowerSlot(slot) end end)
  local slot=i local b=action(S.towerTeamGroup,"ช่องทีม "..i.." • เลือกนักเตะ",function()if S.pickTowerSlot then S.pickTowerSlot(slot) end end)
  b.Name="TeamSlot"..i towerSlotButtons[i]=b
 end
-action(tower,"ล้างทีมที่เลือกเอง",function()table.clear(X.towerTeam) table.clear(S.towerProtected)end)
 action(S.towerTeamGroup,"ล้างทีมที่เลือกเอง",function()table.clear(X.towerTeam) table.clear(S.towerProtected)end)
 toggle(tower,"tower","Auto Battle • ต่อสู้อัตโนมัติ","เลือกทีมใหม่เมื่อเริ่มรอบ • ตรวจเงื่อนไข Tower")
 local towerInfo=label(tower,"",110)
@@ -895,8 +855,6 @@ for i,name in {"TP","Tween"} do
  local b=make("TextButton",collectModes,{Name=name,Position=UDim2.new((i-1)/2,0,0,0),Size=UDim2.new(0.5,-5,0,36),Text=name,Font=Enum.Font.GothamBold,TextSize=14,TextColor3=blue,BackgroundColor3=Color3.fromRGB(17,28,42),BorderSizePixel=0}) round(b,6)
  modeButtons[name]=b b.Activated:Connect(function()X.collectMode=name end)
 end
-local tweenSpeedField=field(events,"collectTweenSpeed","ความเร็ว Tween (studs/วินาที)",5,500) tweenSpeedField.Name="TweenSpeed"
-local tpDelayField=field(events,"collectTPDelay","ช่วงห่าง TP (วินาที)",0.2,10) tpDelayField.Name="TPInterval"
 local tweenSpeedField=make("Frame",collectModes,{Name="TweenSpeed",Position=UDim2.fromOffset(0,44),Size=UDim2.new(1,-6,0,82),BackgroundTransparency=1})
 do
  local title=label(tweenSpeedField,"",30) title.Size=UDim2.new(1,-8,0,30)
@@ -934,29 +892,22 @@ end
 local tpDelayField=field(collectModes,"collectTPDelay","ช่วงห่าง TP (วินาที)",0.2,10) tpDelayField.Name="TPInterval" tpDelayField.Position=UDim2.fromOffset(0,44)
 note(events,"TP = ย้ายทันที • ค่าน้อย = ย้ายถี่ขึ้น\nTween = เคลื่อนที่ต่อเนื่อง • ค่ามาก = เร็วขึ้น")
 local function refreshTravelMode()
- for name,b in modeButtons do b.Text=(X.collectMode==name and "✓ " or "")..name b.BackgroundColor3=X.collectMode==name and Color3.fromRGB(18,86,119) or Color3.fromRGB(17,28,42) end
  for name,b in modeButtons do b.Text=name=="Tween" and "Fast Tween" or name S.styleSelection(b,X.collectMode==name) end
  tweenSpeedField.Visible=X.collectMode=="Tween" tpDelayField.Visible=X.collectMode=="TP"
  collectModes.Size=UDim2.new(1,-6,0,X.collectMode=="Tween" and 132 or 94)
 end
 table.insert(pageRefresh,refreshTravelMode) refreshTravelMode()
-toggle(events,"obby","รับ Obby Bonus เมื่อถึงจุด","รับเฉพาะเมื่อมีสิทธิ์ • แสดงเวลารอ")
 local autoObbyRow=toggle(events,"autoObby","Auto Obby • รับโบนัสอัตโนมัติ","TP รับโบนัสที่พร้อม แล้วกลับบ้านอัตโนมัติ • รอคูลดาวน์")
 table.insert(pageRefresh,function()
  autoObbyRow.Description.Text=not X.autoObby and "Auto Obby OFF" or not S.enabled and "PAUSED • กดปุ่มเริ่มด้านบนก่อน / Click Resume at the top" or S.obbyStatus or "Waiting for a ready bonus"
 end)
 local eventInfo=label(events,"",170)
-local hint=label(panel,"พร้อมใช้งาน • ระบบเสริมเริ่มต้น OFF",25) hint.Position=UDim2.fromOffset(18,552) hint.Size=UDim2.new(1,-36,0,25) hint.TextSize=11
 local hint=label(panel,"พร้อมใช้งาน • ระบบเสริมเริ่มต้น OFF",25) hint.Position=UDim2.fromOffset(175,582) hint.Size=UDim2.new(1,-187,0,25) hint.TextSize=11
 local minimized=false
 local icon=make("TextButton",gui,{Name="FloatingF",Size=UDim2.fromOffset(48,48),Position=UDim2.new(0,14,0.5,-24),Text="F",Font=Enum.Font.GothamBold,TextSize=28,BackgroundColor3=Color3.fromRGB(24,25,29),TextColor3=Color3.fromRGB(0,207,224),BorderSizePixel=0,ZIndex=100}) round(icon,14)
 local iconStroke=make("UIStroke",icon,{Color=Color3.fromRGB(0,207,224),Thickness=2})
 themeTargets[icon]=nil themeTargets[iconStroke]=nil
 local function setMinimized(value)
- if minimized==value then return end
- minimized=value panel.Size=UDim2.fromOffset(680,minimized and 44 or 590) nav.Visible=not minimized button.Visible=not minimized hint.Visible=not minimized
- for _,p in pages do if minimized then p:SetAttribute("WasVisible",p.Visible) p.Visible=false else p.Visible=p:GetAttribute("WasVisible")==true end end
- mini.Text=minimized and "+" or "−"
  minimized=value panel.Visible=not minimized
  icon.Visible=minimized or X.showIcon
 end
@@ -995,7 +946,6 @@ do
 end
 table.insert(pageRefresh,function()icon.Visible=minimized or X.showIcon end)
 mini.Activated:Connect(function()setMinimized(not minimized)end)
-local function resize() local view=workspace.CurrentCamera.ViewportSize scale.Scale=math.min(1,(view.X-32)/680,(view.Y-64)/590) end resize()
 local function resize() local view=workspace.CurrentCamera.ViewportSize scale.Scale=math.min(1,(view.X-32)/900,(view.Y-64)/620) end resize()
 if loadedUI then
  local view=workspace.CurrentCamera.ViewportSize
@@ -1007,8 +957,6 @@ local dragging=false local dragStart local startPosition local dragTouch
 table.insert(connections,header.InputBegan:Connect(function(input) if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then dragging=true dragStart=input.Position startPosition=panel.Position dragTouch=input end end))
 table.insert(connections,UIS.InputEnded:Connect(function(input) if input==dragTouch or input.UserInputType==Enum.UserInputType.MouseButton1 then dragging=false end end))
 table.insert(connections,UIS.InputChanged:Connect(function(input) if dragging and (input.UserInputType==Enum.UserInputType.MouseMovement or input==dragTouch) then local delta=input.Position-dragStart local view=workspace.CurrentCamera.ViewportSize panel.Position=UDim2.fromOffset(math.clamp(startPosition.X.Offset+delta.X,0,math.max(0,view.X-panel.AbsoluteSize.X)),math.clamp(startPosition.Y.Offset+delta.Y,0,math.max(0,view.Y-panel.AbsoluteSize.Y))) end end))
-table.insert(connections,UIS.InputBegan:Connect(function(input,processed) if not processed and input.KeyCode==Enum.KeyCode.RightShift then panel.Visible=not panel.Visible end end))
-gui.Destroying:Connect(function() S.running=false for _,c in connections do c:Disconnect() end end)
 table.insert(connections,UIS.InputBegan:Connect(function(input,processed)
  if UIS:GetFocusedTextBox() or input.UserInputType~=Enum.UserInputType.Keyboard then return end
  if bindingKey then
@@ -1103,7 +1051,6 @@ end
 
 
 local function safe(f)
- local ok,err=pcall(f) if not ok then S.inventoryBusy=false S.errors+=1 S.lastError=tostring(err) end
  local ok,err=pcall(f) if not ok then S.errors+=1 S.lastError=tostring(err) end
 end
 -- Compare every striker at level 1, keeping variant, grade and trait bonuses.
@@ -1364,7 +1311,6 @@ task.spawn(function()
  repeat task.wait() until not S.running or tool.Parent==character or os.clock()>=deadline
  -- Wait for the equipped-tool update to reach the server before selling.
  task.wait(0.18)
- if S.running and S.enabled and tool.Parent==character and not B.IsBoxFavorited(P,target.name,target.variant) then
  if S.running and S.enabled and config.autoSellLockers and tool.Parent==character and character:FindFirstChildOfClass("Tool")==tool and not B.IsBoxFavorited(P,target.name,target.variant) then
  local before=count(target.name,target.variant)
  if before>0 then
@@ -1564,11 +1510,9 @@ task.spawn(function()
  end
  end
  -- Give every equipped striker a turn; use the current full cash balance.
- if due("striker",0.25) then
  if X.strikerUpgrade and due("striker",0.25) then
  local maxLevel=require(RS.Shared.Constants).MaxPlayerUnitLevel
  for _,v in drops do
- if not S.running or not S.enabled or S.selectingTraining then break end
  if not S.running or not S.enabled or not X.strikerUpgrade or S.selectingTraining then break end
  local part=v.Part
  if part.Parent and part:GetAttribute("Type")=="PlayerUnit" then
@@ -1590,22 +1534,6 @@ task.spawn(function()
  end)
  S.inventoryBusy=false
  S.baseBusy=false
- end
- if due("ui",0.2) then
- if S.lockerSale and S.lockerSale.status then hint.Text=S.lockerSale.status elseif config.warnings and S.warning then hint.Text=S.warning elseif S.buyStatus then hint.Text=S.buyStatus elseif S.sellOnce and S.sellOnce.sent then hint.Text=S.sellOnce.status elseif S.lastUpgrade then hint.Text="UPGRADED  "..S.lastUpgrade.name.."  Lv."..S.lastUpgrade.level end
- local plot=workspace.Map.PlotModels:FindFirstChild(P.Name)
- local total,units,boxes,empty=0,0,0,0
- if plot then
- for _,part in game.CollectionService:GetTagged("DropperBasePart") do
- if part:IsDescendantOf(plot) and part:GetAttribute("Unlocked") then
- total+=1
- local kind=part:GetAttribute("Type")
- if kind=="PlayerUnit" then units+=1 elseif kind=="Box" then boxes+=1 else empty+=1 end
- end end end
- S.baseSlots={total=total,strikers=units,lockers=boxes,empty=empty}
- stats.Text=string.format("BASE      %d / %d occupied   |   %d free\nTEAM      %d strikers   |   %d lockers\nQUEUE    %d waiting   /   %d opened\nGROW     %d upgrades   /   %d swaps\nLUCK      %d purchases   |   errors %d",total-empty,total,empty,units,boxes,S.queuedBoxes or 0,S.opened,S.strikerUpgrades,S.baseSwaps,S.luckUpgrades,S.errors)
- button.Text=S.enabled and "RUNNING   •   CLICK TO PAUSE" or "PAUSED   •   CLICK TO RESUME"
- button.BackgroundColor3=S.enabled and Color3.fromRGB(15,72,110) or Color3.fromRGB(40,47,59)
  end
  task.wait(0.05)
  end
@@ -1905,7 +1833,6 @@ worker("Training",0.03,function()
  if type(cost)~="number" or cost<0 or cost==math.huge or cost>(D.GetData().Currency.Cash or 0) then X.grade=false status.Training="เงินไม่พอสุ่ม Grade" continue end
  end
  local needsTravel=not GS.CanReachRollStation(P,service.HITBOX_TAG)
- if needsTravel and (not X.trainingTP or (D.GetData().Potions.BluetoothPotion or 0)>0) then
  if needsTravel and not X.trainingTP then
  status.Training="อยู่นอกระยะสถานีสุ่ม" continue
  end
@@ -1913,8 +1840,6 @@ worker("Training",0.03,function()
  local trip
  local function restoreTraining()
  if trip and P.Character==trip.char and trip.root.Parent and trip.human.Health>0 then
- local safePoint=S.checkCollectionGround and S.checkCollectionGround(trip.origin.Position)
- if safePoint then trip.root.AssemblyLinearVelocity=Vector3.zero trip.root.AssemblyAngularVelocity=Vector3.zero trip.root.CFrame=CFrame.new(safePoint)*trip.origin.Rotation end
  if S.returnTrainingSafe then S.returnTrainingSafe(trip.origin) end
  end
  S.trainingTravel=false
@@ -1939,9 +1864,6 @@ worker("Training",0.03,function()
  end
  if not origin or not destination then status.Training="No safe station travel point" return end
  trip={char=char,root=root,human=human,origin=CFrame.new(origin)*root.CFrame.Rotation}
- root.AssemblyLinearVelocity=Vector3.zero root.CFrame=CFrame.new(destination)*root.CFrame.Rotation
- task.wait(0.35)
- if not alive() or not S.enabled or not X[kind] or P.Character~=char or not GS.CanReachRollStation(P,service.HITBOX_TAG) then status.Training="Station travel cancelled" return end
  root.AssemblyLinearVelocity=Vector3.zero root.AssemblyAngularVelocity=Vector3.zero root.CFrame=CFrame.new(destination)*root.CFrame.Rotation
  status.Training="TP • Waiting for station range"
  task.wait(0.3)
@@ -1954,7 +1876,6 @@ worker("Training",0.03,function()
  local revision=gradeRevisions[id] or 0
  rollCounts[kind]+=1
  if kind=="grade" then R.NewRerollPlayerUnitGrade:FireServer(id,useTokens,unit.Grade) else R.RerollPlayerUnitTrait:FireServer(id,unit.Trait) end
- local changed=waitFor(function()local u=D.GetData().PlayerUnits[id] return not u or u[token]~=old or (useTokens and (D.GetData().Tokens[token] or 0)<before) or (kind=="grade" and (gradeRevisions[id] or 0)>revision) end,2)
  local changed=waitFor(function()local u=D.GetData().PlayerUnits[id] return not u or u[token]~=old or (useTokens and (D.GetData().Tokens[token] or 0)<before) or (kind=="grade" and (gradeRevisions[id] or 0)>revision) or (not useTokens and (D.GetData().Currency.Cash or 0)<cashBefore) end,3)
  status.Training=token.." "..rollCounts[kind].."/"..(X.noRollLimit and "∞" or tostring(math.floor(X.rollLimit)))..(changed and " • ยืนยันแล้ว" or " • ไม่ยืนยัน: หยุด")
  if not changed then X[kind]=false else S.confirmed.rolls=(S.confirmed.rolls or 0)+1 end
@@ -2133,7 +2054,6 @@ local function watchNode(node)
  if watched[node] then return end
  watched[node]=true
  table.insert(connections,node:GetAttributeChangedSignal("Occupied"):Connect(function()
- if node:GetAttribute("Occupied")~=true then confirmPickup(node) end
  if node:GetAttribute("Occupied")~=true then confirmPickup(node)
  else S.attemptedTargets[node]=nil routeBlocked[node]=nil end
  end))
@@ -2203,7 +2123,6 @@ end
 returnFromTP=function(received)
  local trip=tpTrip if not trip then return end
  tpTrip=nil
- if P.Character~=trip.character or not trip.root.Parent or trip.human.Health<=0 or manualControl() then return end
  if P.Character~=trip.character or not trip.root.Parent or trip.human.Health<=0 then
  if trip.root.Parent then trip.root.Anchored=trip.wasAnchored end
  return end
@@ -2330,7 +2249,6 @@ worker("Events",0.15,function()
  end
  if not alive() or not S.enabled then return end
  local tokens,items,mapItems=0,0,0 local obbyLines={} local targets={}
- local function target(c) if enabledTarget(c) then table.insert(targets,c) end end
  local function target(c)
  if c.node then c.visual=S.pickupVisuals[c.node] if not c.visual or not c.visual.Parent then return end end
  if enabledTarget(c) then table.insert(targets,c) end
@@ -2394,7 +2312,6 @@ task.spawn(function()
  local nextTeleportAt=0
  while alive() do
  local ok,err=pcall(function()
- if not S.enabled or not X.collectWalk or not (X.mapCollect or X.events) or S.selectingTraining or S.trainingTravel or S.shopOpen then stopWalking() return end
  if not S.enabled or not X.collectWalk or not (X.mapCollect or X.events) or S.selectingTraining or S.trainingTravel or S.obbyTravel or S.shopOpen then stopWalking() return end
  if manualControl() then collect.status="พักเดิน: กำลังควบคุมตัวละคร" stopWalking() return end
  local character=P.Character local root=character and character:FindFirstChild("HumanoidRootPart")
@@ -2405,7 +2322,6 @@ task.spawn(function()
  lastSafe={character=character,frame=CFrame.new(originPoint)*root.CFrame.Rotation}
  local target,nearest
  for _,c in candidates do
- if exists(c) and enabledTarget(c) and os.clock()>=(routeBlocked[c.key] or 0) then
  if exists(c) and enabledTarget(c) and S.canTravelTarget(c) and os.clock()>=(routeBlocked[c.key] or 0) then
  local distance=(root.Position-c.pos).Magnitude
  if distance>4 and (not nearest or distance<nearest) then target=c nearest=distance end
@@ -2416,7 +2332,6 @@ task.spawn(function()
  collect.walking=true collect.target=target.name collect.mode=mode walkingHumanoid=human
  collect.status="กำลังเก็บด้วย "..mode.." • "..target.name
  local function continuing()
- return alive() and S.enabled and X.collectWalk and X.collectMode==mode and not S.selectingTraining and not S.trainingTravel and not S.shopOpen and enabledTarget(target) and exists(target) and not manualControl() and P.Character==character and root.Parent~=nil and human.Health>0
  return alive() and S.enabled and X.collectWalk and X.collectMode==mode and not S.selectingTraining and not S.trainingTravel and not S.obbyTravel and not S.shopOpen and enabledTarget(target) and exists(target) and not manualControl() and P.Character==character and root.Parent~=nil and human.Health>0
  end
  local params=RaycastParams.new() params.FilterType=Enum.RaycastFilterType.Exclude
@@ -2476,7 +2391,6 @@ task.spawn(function()
  if tpTrip==trip then returnFromTP(false) end
  stopWalking() return
  end
- local path=pathfinding:CreatePath({AgentRadius=1.5,AgentHeight=5,AgentCanJump=true,WaypointSpacing=5})
  local path=pathfinding:CreatePath({AgentRadius=1.5,AgentHeight=5,AgentCanJump=true,WaypointSpacing=12})
  path:ComputeAsync(root.Position,approach)
  if not continuing() then stopWalking() return end
@@ -2496,12 +2410,10 @@ task.spawn(function()
  local destination=standingPosition(waypoint.Position)
  if not destination then routeBlocked[target.key]=os.clock()+15 break end
  while continuing() and (root.Position-destination).Magnitude>0.3 do
- local speed=math.clamp(tonumber(X.collectTweenSpeed) or 60,5,500)
  local speed=math.clamp(tonumber(X.collectTweenSpeed) or 600,5,2000)
  local duration=math.max(0.02,(root.Position-destination).Magnitude/speed)
  local tween=tweenService:Create(root,TweenInfo.new(duration,Enum.EasingStyle.Linear),{CFrame=CFrame.new(destination)*root.CFrame.Rotation})
  activeTravelTween=tween tween:Play()
- repeat task.wait(0.03) until not continuing() or tween.PlaybackState~=Enum.PlaybackState.Playing or X.collectTweenSpeed~=speed or (root.Position-target.pos).Magnitude<=4 or os.clock()-started>90
  repeat task.wait(0.01) until not continuing() or tween.PlaybackState~=Enum.PlaybackState.Playing or X.collectTweenSpeed~=speed or (root.Position-target.pos).Magnitude<=4 or os.clock()-started>90
  tween:Cancel() if activeTravelTween==tween then activeTravelTween=nil end
  if os.clock()-started>90 or X.collectTweenSpeed==speed then break end
@@ -2548,10 +2460,6 @@ task.spawn(function()
  towerChoice.Text="Tower: "..X.towerName..(X.towerLatest and "  (Auto)" or "  ›")
  for i,b in towerSlotButtons do local u=X.towerTeam[i] and D.GetData().PlayerUnits[X.towerTeam[i]] b.Text="ช่องทีม "..i..(u and (" • "..u.PlayerUnitName.." Lv."..(u.Level or 1)) or " • เลือกนักเตะ") end
  towerInfo.Text=status.Tower or "เลือก Tower แล้วเปิด Auto Best Team"
- eventInfo.Text=(status.Events or "").."\n"..(status.Obby or "")
- local rows={}
- for _,key in {"SpareStrikers","Polisher","Potions","Market","Skins","Training","Tower","Events"} do table.insert(rows,key..": "..(status[key] or "OFF / ยังไม่เริ่ม")) end
- local rw=G.BlueFarmRewards if rw then table.insert(rows,"Rewards: "..tostring(rw.status)) end
  eventInfo.Text=(status.Events or "").."\n"..(status.Obby or "").."\n"..(S.obbyStatus or "")
  if ready("overviewLive",0.25) then
  local home=plot() local total,units,boxes,empty=0,0,0,0
@@ -2591,7 +2499,6 @@ task.spawn(function()
  detail.Size=UDim2.new(1,-12,0,math.max(245,#rows*30))
  end)
  if not ok then S.lastError="UI: "..tostring(err) end
- task.wait(0.5)
  task.wait(0.1)
  end
  clearMarkers()
